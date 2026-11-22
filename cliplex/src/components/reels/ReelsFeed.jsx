@@ -1,10 +1,13 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import ReelCard from './ReelCard';
 
 export default function ReelsFeed({
   word,
   clip,
   feedClips,
+  activeProfileId,
+  targetLang,
+  isVideoWatched,
   isLoading,
   uiLang,
   hideTranslation,
@@ -18,21 +21,39 @@ export default function ReelsFeed({
 }) {
   const [activeIndex, setActiveIndex] = useState(0);
   const containerRef = useRef(null);
+  const isVideoWatchedRef = useRef(isVideoWatched);
+  const wordClips = word?.clips;
 
-  // Extrae el array de clips desde `word.clips` o usa `clip` como respaldo
-  const clips = Array.isArray(feedClips)
-    ? feedClips
-    : Array.isArray(word?.clips)
-    ? word.clips
-    : clip
-      ? [clip]
-      : [];
+  const sourceClips = useMemo(() => (
+    Array.isArray(feedClips)
+      ? feedClips
+      : Array.isArray(wordClips)
+        ? wordClips
+        : clip
+          ? [clip]
+          : []
+  ), [feedClips, wordClips, clip]);
+  const [clips, setClips] = useState(sourceClips);
 
   const keyword = word?.word || '';
 
   useEffect(() => {
+    isVideoWatchedRef.current = isVideoWatched;
+  }, [isVideoWatched]);
+
+  useEffect(() => {
+    const unseen = [];
+    const seen = [];
+    sourceClips.forEach((item) => {
+      const isSeen = item.videoId && isVideoWatchedRef.current?.(targetLang, item.videoId);
+      (isSeen ? seen : unseen).push(item);
+    });
+    setClips([...unseen, ...seen]);
+  }, [sourceClips, word?.word, activeProfileId, targetLang]);
+
+  useEffect(() => {
     if (containerRef.current) containerRef.current.scrollTop = 0;
-  }, [feedClips]);
+  }, [feedClips, word?.word, activeProfileId]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -53,7 +74,29 @@ export default function ReelsFeed({
     cards.forEach((card) => observer.observe(card));
 
     return () => observer.disconnect();
-  }, [feedClips, word?.word, clips.length]);
+  }, [clips, feedClips, word?.word]);
+
+  function wrapFeedIfComplete() {
+    const container = containerRef.current;
+    if (!container || clips.length < 2) return false;
+    const atEnd = container.scrollTop + container.clientHeight >= container.scrollHeight - 2;
+    const allWatched = clips.every((item) => (
+      item.videoId && isVideoWatchedRef.current?.(targetLang, item.videoId)
+    ));
+    if (atEnd && allWatched) {
+      container.scrollTop = 0;
+      return true;
+    }
+    return false;
+  }
+
+  function handleFeedScroll() {
+    wrapFeedIfComplete();
+  }
+
+  function handleFeedWheel(event) {
+    if (event.deltaY > 0) wrapFeedIfComplete();
+  }
 
   if (isLoading && !feedClips) {
     return (
@@ -77,6 +120,9 @@ export default function ReelsFeed({
   return (
     <div
       ref={containerRef}
+      onScroll={handleFeedScroll}
+      onWheel={handleFeedWheel}
+      onTouchEnd={wrapFeedIfComplete}
       className="w-full h-full overflow-y-scroll snap-y snap-mandatory scrollbar-none bg-black"
     >
       {clips.map((item, index) => (

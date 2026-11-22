@@ -24,7 +24,7 @@ cliplex/
 
 ## Setup
 
-Install dependencies and copy `.env.example` to `.env`. Set `YOUTUBE_API_KEY`, `SUPADATA_API_KEY`, and `GEMINI_API_KEY` on the server; do not expose these credentials through `VITE_*` variables.
+Install dependencies and copy `.env.example` to `.env`. Set `YOUTUBE_API_KEY`, `SUPADATA_API_KEY`, `QDRANT_URL`, and `GEMINI_API_KEY` on the server. Set `QDRANT_API_KEY` when required by your Qdrant instance, and optionally change `QDRANT_COLLECTION`; do not expose these credentials through `VITE_*` variables.
 
 ```sh
 npm install
@@ -37,7 +37,7 @@ Without configured API keys, curated local clips remain available. Requests to e
 
 ## Render deployment
 
-Configure `YOUTUBE_API_KEY` and `SUPADATA_API_KEY` as server environment variables on the Render API service. Render supplies `PORT`; do not expose either credential through a `VITE_*` variable. For a separately hosted frontend, set `VITE_API_BASE_URL` to the API service origin at build time, without a trailing slash.
+Configure `YOUTUBE_API_KEY`, `SUPADATA_API_KEY`, and `QDRANT_URL` as server environment variables on the Render API service. Set `QDRANT_API_KEY` if your Qdrant instance requires it. The API creates `QDRANT_COLLECTION` (`youtube-transcripts` by default) if it does not exist, and caches transcripts by YouTube video ID plus matched word intervals so cache hits do not consume Supadata credits. Reel histories remain profile-specific in the browser; unseen clips are ordered first, watched reels loop at their selected interval, and the feed wraps to watched clips after all available videos have been seen. Render supplies `PORT`; do not expose credentials through a `VITE_*` variable. For a separately hosted frontend, set `VITE_API_BASE_URL` to the API service origin at build time, without a trailing slash.
 
 The API caches successful clip searches in memory only. Restarts and separate Render instances have independent caches; `server/cache/clipsCache.json` is not used by the API.
 

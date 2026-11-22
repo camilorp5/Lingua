@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { Supadata } from '@supadata/js';
 
 const TRANSCRIPT_REQUEST_INTERVAL_MS = 1_000;
@@ -107,6 +108,110 @@ function normalizeTranscriptSegments(value) {
   return normalized.every(Boolean) ? normalized : null;
 }
 
+function getQdrantConfig() {
+  const url = process.env.QDRANT_URL;
+  if (!url) {
+    const error = new Error('Falta QDRANT_URL en la configuración del servidor.');
+    error.status = 503;
+    throw error;
+  }
+
+  return {
+    url: url.replace(/\/+$/, ''),
+    apiKey: process.env.QDRANT_API_KEY,
+    collection: process.env.QDRANT_COLLECTION || 'youtube-transcripts'
+  };
+}
+
+async function qdrantRequest(config, path, { method = 'GET', body, allowNotFound = false, allowConflict = false } = {}) {
+  const response = await fetch(
+    `${config.url}/collections/${encodeURIComponent(config.collection)}${path}`,
+    {
+      method,
+      headers: {
+        ...(config.apiKey ? { 'api-key': config.apiKey } : {}),
+        ...(body ? { 'Content-Type': 'application/json' } : {})
+      },
+      ...(body ? { body: JSON.stringify(body) } : {})
+    }
+  );
+  const data = await response.json().catch(() => null);
+
+  if (allowNotFound && response.status === 404) return null;
+  if (allowConflict && response.status === 409) {
+    return data;
+  }
+  if (!response.ok) {
+    const error = new Error(
+      data?.status?.error || data?.result?.error || `Qdrant request failed (${response.status}).`
+    );
+    error.status = 503;
+    throw error;
+  }
+  return data;
+}
+
+let qdrantCollectionReady;
+
+async function ensureQdrantCollection(config) {
+  if (!qdrantCollectionReady) {
+    qdrantCollectionReady = (async () => {
+      const collection = await qdrantRequest(config, '', { allowNotFound: true });
+      if (collection) return;
+
+      await qdrantRequest(config, '', {
+        method: 'PUT',
+        body: { vectors: { size: 1, distance: 'Dot' } },
+        allowConflict: true
+      });
+    })().catch((error) => {
+      qdrantCollectionReady = null;
+      throw error;
+    });
+  }
+  await qdrantCollectionReady;
+}
+
+function getTranscriptPointId(videoId) {
+  const hash = createHash('sha256').update(videoId).digest('hex').slice(0, 32).split('');
+  hash[12] = '5';
+  hash[16] = ((parseInt(hash[16], 16) & 0x3) | 0x8).toString(16);
+  const id = hash.join('');
+  return `${id.slice(0, 8)}-${id.slice(8, 12)}-${id.slice(12, 16)}-${id.slice(16, 20)}-${id.slice(20)}`;
+}
+
+async function getCachedTranscript(config, videoId) {
+  const data = await qdrantRequest(config, '/points', {
+    method: 'POST',
+    body: {
+      ids: [getTranscriptPointId(videoId)],
+      with_payload: true,
+      with_vector: false
+    }
+  });
+  const payload = data?.result?.[0]?.payload;
+  if (payload?.videoId !== videoId) return null;
+  const transcript = normalizeTranscriptSegments(payload.transcript);
+  if (!transcript) return null;
+  return {
+    transcript,
+    matches: Array.isArray(payload.matches) ? payload.matches : []
+  };
+}
+
+async function cacheTranscript(config, videoId, transcript, matches) {
+  await qdrantRequest(config, '/points?wait=true', {
+    method: 'PUT',
+    body: {
+      points: [{
+        id: getTranscriptPointId(videoId),
+        vector: [1],
+        payload: { videoId, transcript, matches }
+      }]
+    }
+  });
+}
+
 export async function findClipsForWord(word, lang = 'en') {
   const apiKey = process.env.YOUTUBE_API_KEY;
   if (!apiKey) {
@@ -174,23 +279,57 @@ export async function findClipsForWord(word, lang = 'en') {
     eligibleCandidates.push({ videoId, snippet });
   }
 
-  const transcriptApiKey = process.env.SUPADATA_API_KEY;
-  if (eligibleCandidates.length > 0 && !transcriptApiKey) {
-    const error = new Error('Falta SUPADATA_API_KEY en la configuración del servidor.');
-    error.status = 503;
-    throw error;
+  const qdrantConfig = eligibleCandidates.length > 0 ? getQdrantConfig() : null;
+  let qdrantAvailable = Boolean(qdrantConfig);
+  if (qdrantConfig) {
+    try {
+      await ensureQdrantCollection(qdrantConfig);
+    } catch (error) {
+      qdrantAvailable = false;
+      console.warn(`[Transcript cache] Qdrant no disponible: ${error.message}`);
+    }
   }
-  const supadata = eligibleCandidates.length > 0
-    ? new Supadata({ apiKey: transcriptApiKey })
-    : null;
+  let supadata = null;
 
   for (const { videoId, snippet } of eligibleCandidates) {
     if (matchedClips.length >= CLIP_RESULT_LIMIT) break;
 
     try {
       transcriptAttempts += 1;
-      const transcriptResult = await requestTranscript(videoId, supadata);
-      const transcript = normalizeTranscriptSegments(transcriptResult);
+      let cachedTranscript = null;
+      if (qdrantAvailable) {
+        try {
+          cachedTranscript = await getCachedTranscript(qdrantConfig, videoId);
+        } catch (error) {
+          console.warn(`[Transcript cache] No se pudo consultar ${videoId}: ${error.message}`);
+          qdrantAvailable = false;
+        }
+      }
+
+      let transcript = cachedTranscript?.transcript;
+      let matches = cachedTranscript?.matches || [];
+      if (transcript) {
+        console.info(`[Transcript cache] HIT ${videoId}`);
+      } else {
+        console.info(`[Transcript cache] MISS ${videoId}${qdrantAvailable ? '' : ' (Qdrant no disponible)'}`);
+        const transcriptApiKey = process.env.SUPADATA_API_KEY;
+        if (!transcriptApiKey) {
+          const error = new Error('Falta SUPADATA_API_KEY en la configuración del servidor.');
+          error.status = 503;
+          throw error;
+        }
+        supadata ||= new Supadata({ apiKey: transcriptApiKey });
+        const transcriptResult = await requestTranscript(videoId, supadata);
+        transcript = normalizeTranscriptSegments(transcriptResult);
+        if (transcript && qdrantAvailable) {
+          try {
+            await cacheTranscript(qdrantConfig, videoId, transcript, matches);
+            console.info(`[Transcript cache] SAVED ${videoId}`);
+          } catch (error) {
+            console.warn(`[Transcript cache] No se pudo guardar ${videoId}: ${error.message}`);
+          }
+        }
+      }
       if (!transcript) throw new Error(`No transcript is available for ${videoId}.`);
       transcriptSuccesses += 1;
       const matchIndex = transcript.findIndex((line) => regex.test(line.text));
@@ -205,7 +344,7 @@ export async function findClipsForWord(word, lang = 'en') {
         transcript[matchIndex + 1]?.text
       ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
 
-      matchedClips.push({
+      const clip = {
         id: `${videoId}_${startSec}`,
         videoId,
         creator: `@${(snippet.channelTitle || 'youtube').replace(/\s+/g, '_').toLowerCase()}`,
@@ -213,7 +352,31 @@ export async function findClipsForWord(word, lang = 'en') {
         startSec,
         endSec,
         targetSentence: fullSentence
-      });
+      };
+      matchedClips.push(clip);
+
+      if (qdrantAvailable) {
+        const match = {
+          word: word.toLocaleLowerCase(),
+          language: lang,
+          startSec,
+          endSec,
+          targetSentence: fullSentence
+        };
+        const matchKey = `${match.language}:${match.word}:${match.startSec}`;
+        const updatedMatches = [
+          ...matches.filter((existing) => (
+            `${existing.language}:${existing.word}:${existing.startSec}` !== matchKey
+          )),
+          match
+        ];
+        try {
+          await cacheTranscript(qdrantConfig, videoId, transcript, updatedMatches);
+          console.info(`[Transcript cache] Intervalo guardado ${videoId} (${match.word})`);
+        } catch (error) {
+          console.warn(`[Transcript cache] No se pudo guardar el intervalo de ${videoId}: ${error.message}`);
+        }
+      }
     } catch (error) {
       transcriptFailures += 1;
       console.warn(`[YouTube API] No se pudieron leer subtítulos de ${videoId}: ${error.message}`);

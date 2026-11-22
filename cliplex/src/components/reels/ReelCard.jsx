@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import YouTube from 'react-youtube';
 
 export default function ReelCard({
@@ -12,12 +12,31 @@ export default function ReelCard({
 }) {
   const playerRef = useRef(null);
   const isPlayerReadyRef = useRef(false);
+  const watchedClipRef = useRef(null);
+  const onVideoWatchedRef = useRef(onVideoWatched);
+  const clipRef = useRef(clip);
+  const clipKey = clip?.id || clip?.videoId;
 
   const [isPlayerReady, setIsPlayerReady] = useState(false);
   const [pauseIndicator, setPauseIndicator] = useState('hidden');
   const [playbackRate, setPlaybackRate] = useState(1);
   // 'height' = llena el alto y recorta horizontales | 'width' = ajusta al ancho sin recortar
   const [fitMode, setFitMode] = useState('height');
+
+  useEffect(() => {
+    onVideoWatchedRef.current = onVideoWatched;
+    clipRef.current = clip;
+  }, [onVideoWatched, clip]);
+
+  useEffect(() => {
+    watchedClipRef.current = null;
+  }, [clipKey]);
+
+  const markClipWatched = useCallback(() => {
+    if (watchedClipRef.current === clipKey) return;
+    watchedClipRef.current = clipKey;
+    onVideoWatchedRef.current?.(clipRef.current);
+  }, [clipKey]);
 
   useEffect(() => {
     const player = playerRef.current;
@@ -48,7 +67,12 @@ export default function ReelCard({
         if (typeof player.getCurrentTime === 'function') {
           const current = player.getCurrentTime();
           const start = clip.startSec || 0;
-          if (current >= clip.endSec || current < start - 0.5) {
+          if (current >= clip.endSec) {
+            markClipWatched();
+            const wasPlaying = [1, 3].includes(player.getPlayerState());
+            player.seekTo(start, true);
+            if (wasPlaying) player.playVideo();
+          } else if (current < start - 0.5) {
             player.seekTo(start, true);
           }
         }
@@ -58,7 +82,7 @@ export default function ReelCard({
     }, 300);
 
     return () => clearInterval(interval);
-  }, [isActive, clip?.startSec, clip?.endSec]);
+  }, [isActive, clip?.startSec, clip?.endSec, markClipWatched]);
 
   const handleSpeedChange = (speed) => {
     setPlaybackRate(speed);
@@ -152,10 +176,7 @@ export default function ReelCard({
                   setPauseIndicator('hidden');
                 }
                 if (e.data === 0 && isActive) {
-                  if (onVideoWatched) {
-                    onVideoWatched(clip);
-                    return;
-                  }
+                  markClipWatched();
                   e.target.seekTo(clip.startSec || 0, true);
                   e.target.playVideo();
                 }

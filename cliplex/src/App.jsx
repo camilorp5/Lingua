@@ -79,12 +79,8 @@ export default function App() {
 
   const currentWord = wordList[activeWordIndex];
   const currentWordClips = useMemo(
-    () => (currentWord?.clips || []).filter((clip) => !isVideoWatched(targetLang, clip.videoId)),
-    [currentWord?.clips, isVideoWatched, targetLang]
-  );
-  const visibleMixedClips = useMemo(
-    () => mixedClips.filter((clip) => !isVideoWatched(vaultLanguage, clip.videoId)),
-    [isVideoWatched, mixedClips, vaultLanguage]
+    () => currentWord?.clips || [],
+    [currentWord?.clips]
   );
   const currentClip = currentWordClips[activeClipIndex] || currentWordClips[0];
 
@@ -207,17 +203,18 @@ export default function App() {
         throw new Error(details.join(' ') || 'No se encontraron clips para las palabras seleccionadas.');
       }
 
-      const clips = availableClips.filter(
-        (clip) => !isVideoWatched(language, clip.videoId)
-      );
-      if (!clips.length) {
-        throw new Error('Ya viste todos los clips disponibles para estas palabras en este perfil.');
+      const unseenClips = [];
+      const seenClips = [];
+      availableClips.forEach((clip) => (
+        (isVideoWatched(language, clip.videoId) ? seenClips : unseenClips).push(clip)
+      ));
+      for (const clips of [unseenClips, seenClips]) {
+        for (let index = clips.length - 1; index > 0; index -= 1) {
+          const randomIndex = Math.floor(Math.random() * (index + 1));
+          [clips[index], clips[randomIndex]] = [clips[randomIndex], clips[index]];
+        }
       }
-      for (let index = clips.length - 1; index > 0; index -= 1) {
-        const randomIndex = Math.floor(Math.random() * (index + 1));
-        [clips[index], clips[randomIndex]] = [clips[randomIndex], clips[index]];
-      }
-      setMixedClips(clips.slice(0, 10));
+      setMixedClips([...unseenClips, ...seenClips].slice(0, 10));
       if (failedSearches.length) {
         const failedWords = selectedWords.filter((_, index) => results[index].status === 'rejected');
         setVaultSearchError(`Sin resultados para: ${failedWords.join(', ')}. Se mezclaron los clips disponibles.`);
@@ -326,7 +323,10 @@ export default function App() {
             <ReelsFeed
               word={currentWord ? { ...currentWord, clips: currentWordClips } : currentWord}
               clip={currentClip}
-              feedClips={mixedClips.length ? visibleMixedClips : undefined}
+              feedClips={mixedClips.length ? mixedClips : undefined}
+              activeProfileId={activeProfileId}
+              targetLang={mixedClips.length ? vaultLanguage : targetLang}
+              isVideoWatched={isVideoWatched}
               isLoading={isLoading && mixedClips.length === 0}
               clipIndex={activeClipIndex}
               playbackSpeed={playbackSpeed}
