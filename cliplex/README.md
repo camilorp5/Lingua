@@ -24,7 +24,7 @@ cliplex/
 
 ## Setup
 
-Install dependencies and copy `.env.example` to `.env`. Set `YOUTUBE_API_KEY`, `YOUTUBE_TRANSCRIPT_API_TOKEN`, and `GEMINI_API_KEY` on the server; do not expose these credentials through `VITE_*` variables.
+Install dependencies and copy `.env.example` to `.env`. Set `YOUTUBE_API_KEY`, `SUPADATA_API_KEY`, and `GEMINI_API_KEY` on the server; do not expose these credentials through `VITE_*` variables.
 
 ```sh
 npm install
@@ -37,7 +37,7 @@ Without configured API keys, curated local clips remain available. Requests to e
 
 ## Render deployment
 
-Configure `YOUTUBE_API_KEY` and `YOUTUBE_TRANSCRIPT_API_TOKEN` as server environment variables on the Render API service. `YOUTUBE_TRANSCRIPT_API_TOKEN` is the API token from your YouTube Transcript profile; the server sends it as a Basic authorization token. Render supplies `PORT`; do not expose either credential through a `VITE_*` variable. For a separately hosted frontend, set `VITE_API_BASE_URL` to the API service origin at build time, without a trailing slash.
+Configure `YOUTUBE_API_KEY` and `SUPADATA_API_KEY` as server environment variables on the Render API service. Render supplies `PORT`; do not expose either credential through a `VITE_*` variable. For a separately hosted frontend, set `VITE_API_BASE_URL` to the API service origin at build time, without a trailing slash.
 
 The API caches successful clip searches in memory only. Restarts and separate Render instances have independent caches; `server/cache/clipsCache.json` is not used by the API.
 

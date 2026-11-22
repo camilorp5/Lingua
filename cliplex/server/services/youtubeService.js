@@ -1,9 +1,8 @@
-const TRANSCRIPT_API_URL = 'https://www.youtube-transcript.io/api/transcripts';
-const TRANSCRIPT_BATCH_SIZE = 50;
-const TRANSCRIPT_REQUEST_LIMIT = 5;
-const TRANSCRIPT_REQUEST_WINDOW_MS = 10_000;
-const TRANSCRIPT_MAX_RETRIES = 3;
-let transcriptRequestTimes = [];
+import { Supadata } from '@supadata/js';
+
+const TRANSCRIPT_REQUEST_INTERVAL_MS = 1_000;
+const TRANSCRIPT_JOB_TIMEOUT_MS = 60_000;
+let lastTranscriptRequestTime = 0;
 let transcriptRequestQueue = Promise.resolve();
 
 const SEARCH_RESULT_LIMIT = 50;
@@ -45,105 +44,44 @@ function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-function getRetryAfterMs(value) {
-  if (!value) return null;
-
-  const seconds = Number(value);
-  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
-
-  const retryAt = Date.parse(value);
-  return Number.isNaN(retryAt) ? null : Math.max(0, retryAt - Date.now());
-}
-
-async function waitForTranscriptRequestSlot() {
-  while (true) {
-    const now = Date.now();
-    transcriptRequestTimes = transcriptRequestTimes.filter(
-      (requestTime) => now - requestTime < TRANSCRIPT_REQUEST_WINDOW_MS
-    );
-    if (transcriptRequestTimes.length < TRANSCRIPT_REQUEST_LIMIT) {
-      transcriptRequestTimes.push(now);
-      return;
-    }
-
-    await delay(transcriptRequestTimes[0] + TRANSCRIPT_REQUEST_WINDOW_MS - now);
-  }
-}
-
-async function requestTranscriptBatch(ids, token) {
+function scheduleTranscriptRequest(request) {
   const operation = transcriptRequestQueue.then(async () => {
-    for (let attempt = 0; ; attempt += 1) {
-      await waitForTranscriptRequestSlot();
-      const response = await fetch(TRANSCRIPT_API_URL, {
-        method: 'POST',
-        headers: {
-          Authorization: `Basic ${token}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ ids })
-      });
-
-      if (response.status === 429) {
-        const retryAfterMs = getRetryAfterMs(response.headers.get('Retry-After'));
-        if (retryAfterMs === null) {
-          const error = new Error('YouTube Transcript API respondió 429 sin un Retry-After válido.');
-          error.status = 502;
-          throw error;
-        }
-        if (attempt >= TRANSCRIPT_MAX_RETRIES) {
-          const error = new Error('YouTube Transcript API sigue respondiendo 429 tras varios reintentos.');
-          error.status = 429;
-          throw error;
-        }
-        await delay(retryAfterMs);
-        continue;
-      }
-
-      const data = await response.json().catch(() => null);
-      if (!response.ok) {
-        const error = new Error(
-          data?.message || `YouTube Transcript API request failed (${response.status}).`
-        );
-        error.status = response.status >= 500 ? 502 : response.status;
-        throw error;
-      }
-      return data;
-    }
+    const waitMs = TRANSCRIPT_REQUEST_INTERVAL_MS - (Date.now() - lastTranscriptRequestTime);
+    if (waitMs > 0) await delay(waitMs);
+    lastTranscriptRequestTime = Date.now();
+    return request();
   });
   transcriptRequestQueue = operation.catch(() => {});
   return operation;
 }
 
-function getTranscriptResults(data) {
-  const records = Array.isArray(data)
-    ? data
-    : Array.isArray(data?.transcripts)
-      ? data.transcripts
-      : Array.isArray(data?.results)
-        ? data.results
-        : data && typeof data === 'object'
-          ? [data]
-          : [];
+async function requestTranscript(videoId, supadata) {
+  const result = await scheduleTranscriptRequest(
+    () => supadata.transcript({ url: `https://youtu.be/${videoId}` })
+  );
+  if (!('jobId' in result)) return result;
 
-  const transcripts = new Map();
-  for (const record of records) {
-    const videoId = record?.id || record?.videoId;
-    if (typeof videoId === 'string') {
-      transcripts.set(videoId, record.transcript || record.segments);
-      continue;
-    }
-
-    if (record && typeof record === 'object') {
-      for (const [id, transcript] of Object.entries(record)) {
-        transcripts.set(id, transcript?.transcript || transcript?.segments || transcript);
-      }
+  const deadline = Date.now() + TRANSCRIPT_JOB_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    await delay(TRANSCRIPT_REQUEST_INTERVAL_MS);
+    const jobResult = await scheduleTranscriptRequest(
+      () => supadata.transcript.getJobStatus(result.jobId)
+    );
+    if (jobResult.status === 'completed') return jobResult.result;
+    if (jobResult.status === 'failed') {
+      throw new Error(jobResult.error?.message || `Supadata no pudo obtener la transcripción de ${videoId}.`);
     }
   }
-  return transcripts;
+
+  throw new Error(`Supadata no completó la transcripción de ${videoId} a tiempo.`);
 }
 
 function normalizeTranscriptSegments(value) {
-  const segments = Array.isArray(value) ? value : value?.segments;
+  const segments = Array.isArray(value)
+    ? value
+    : Array.isArray(value?.content)
+      ? value.content
+      : value?.segments;
   if (!Array.isArray(segments) || segments.length === 0) return null;
 
   const normalized = segments.map((segment) => {
@@ -167,32 +105,6 @@ function normalizeTranscriptSegments(value) {
   });
 
   return normalized.every(Boolean) ? normalized : null;
-}
-
-async function fetchVideoTranscripts(videoIds) {
-  const results = new Map();
-  if (videoIds.length === 0) return results;
-
-  const token = process.env.YOUTUBE_TRANSCRIPT_API_TOKEN;
-  if (!token) {
-    const error = new Error('Falta YOUTUBE_TRANSCRIPT_API_TOKEN en la configuración del servidor.');
-    error.status = 503;
-    throw error;
-  }
-
-  for (let index = 0; index < videoIds.length; index += TRANSCRIPT_BATCH_SIZE) {
-    const ids = videoIds.slice(index, index + TRANSCRIPT_BATCH_SIZE);
-    const data = await requestTranscriptBatch(ids, token);
-    const transcriptsById = getTranscriptResults(data);
-
-    for (const videoId of ids) {
-      const segments = normalizeTranscriptSegments(transcriptsById.get(videoId));
-      if (segments) results.set(videoId, { segments });
-      else results.set(videoId, { error: new Error(`No transcript is available for ${videoId}.`) });
-    }
-  }
-
-  return results;
 }
 
 export async function findClipsForWord(word, lang = 'en') {
@@ -262,18 +174,23 @@ export async function findClipsForWord(word, lang = 'en') {
     eligibleCandidates.push({ videoId, snippet });
   }
 
-  const transcriptResults = await fetchVideoTranscripts(
-    eligibleCandidates.map(({ videoId }) => videoId)
-  );
+  const transcriptApiKey = process.env.SUPADATA_API_KEY;
+  if (eligibleCandidates.length > 0 && !transcriptApiKey) {
+    const error = new Error('Falta SUPADATA_API_KEY en la configuración del servidor.');
+    error.status = 503;
+    throw error;
+  }
+  const supadata = eligibleCandidates.length > 0
+    ? new Supadata({ apiKey: transcriptApiKey })
+    : null;
 
   for (const { videoId, snippet } of eligibleCandidates) {
     if (matchedClips.length >= CLIP_RESULT_LIMIT) break;
 
     try {
       transcriptAttempts += 1;
-      const transcriptResult = transcriptResults.get(videoId);
-      if (transcriptResult?.error) throw transcriptResult.error;
-      const transcript = transcriptResult?.segments;
+      const transcriptResult = await requestTranscript(videoId, supadata);
+      const transcript = normalizeTranscriptSegments(transcriptResult);
       if (!transcript) throw new Error(`No transcript is available for ${videoId}.`);
       transcriptSuccesses += 1;
       const matchIndex = transcript.findIndex((line) => regex.test(line.text));
