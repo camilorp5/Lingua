@@ -4,11 +4,19 @@ import cors from 'cors';
 import { findClipsForWord } from './services/youtubeService.js';
 
 const app = express();
+const PORT = process.env.PORT || 3001;
+
+// Si quieres restringir a Vercel en producción, puedes pasar allowedOrigins;
+// si dejas app.use(cors()) abierto, funciona para pruebas y múltiples dominios.
 app.use(cors());
 app.use(express.json());
 
-// Caché simple en memoria (luego puedes pasarla a JSON o Supabase)
+// Caché simple en memoria (en Render free tier se limpia si el servicio se duerme/reinicia)
 const memoryCache = new Map();
+
+app.get('/', (req, res) => {
+  res.json({ status: 'ok', service: 'ClipLex API' });
+});
 
 app.get('/api/clips', async (req, res) => {
   const { word, targetLang = 'en', uiLang = 'es' } = req.query;
@@ -19,7 +27,7 @@ app.get('/api/clips', async (req, res) => {
   const cacheKey = `${targetLang}:${uiLang}:${word.toLowerCase()}`;
   const cachedClips = memoryCache.get(cacheKey);
   if (cachedClips?.length) {
-    return res.json(memoryCache.get(cacheKey));
+    return res.json(cachedClips);
   }
 
   try {
@@ -38,4 +46,4 @@ app.get('/api/clips', async (req, res) => {
   }
 });
 
-app.listen(3001, () => console.log('ClipLex API corriendo en http://localhost:3001'));
+app.listen(PORT, () => console.log(`ClipLex API corriendo en puerto ${PORT}`));

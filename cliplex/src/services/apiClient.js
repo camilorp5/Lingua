@@ -1,3 +1,5 @@
+import { API_BASE_URL } from '../config/api.js';
+
 const isDev = import.meta.env.DEV;
 
 export async function fetchWordClips({
@@ -7,7 +9,7 @@ export async function fetchWordClips({
   signal
 }) {
   const params = new URLSearchParams({ word, targetLang, uiLang });
-  const endpoint = `/api/clips?${params.toString()}`;
+  const endpoint = `${API_BASE_URL}/api/clips?${params.toString()}`;
 
   if (isDev) {
     console.info('[Lingua:API] Solicitando clips ->', { word, targetLang, uiLang });
@@ -62,7 +64,7 @@ export async function lookupWord({ word, targetLang, uiLang, sentenceContext = '
     uiLang,
     context: sentenceContext,
   });
-  const endpoint = `/api/lookup?${params.toString()}`;
+  const endpoint = `${API_BASE_URL}/api/lookup?${params.toString()}`;
 
   if (isDev) {
     console.info('[Lingua:API] Consultando palabra ->', { word, targetLang, uiLang });
@@ -99,7 +101,7 @@ export async function lookupWord({ word, targetLang, uiLang, sentenceContext = '
 }
 
 export async function evaluateSentence({ word, sentence, targetLang, uiLang }) {
-  const endpoint = '/api/evaluate';
+  const endpoint = `${API_BASE_URL}/api/evaluate`;
 
   if (isDev) {
     console.info('[Lingua:API] Evaluando frase ->', { word, sentence, targetLang, uiLang });
@@ -148,7 +150,7 @@ export async function evaluateSentence({ word, sentence, targetLang, uiLang }) {
 export const evaluateSentenceWithGemini = evaluateSentence;
 
 export async function generateClips({ word, targetLang, uiLang }) {
-  const res = await fetch('/api/generate-clips', {
+  const res = await fetch(`${API_BASE_URL}/api/generate-clips`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ word, targetLang, uiLang }),
@@ -162,7 +164,7 @@ export async function generateClips({ word, targetLang, uiLang }) {
 }
 
 export async function importVideo({ url, targetLang, uiLang }) {
-  const res = await fetch('/api/import', {
+  const res = await fetch(`${API_BASE_URL}/api/import`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ url, targetLang, uiLang }),
