@@ -10,7 +10,7 @@ export async function fetchWordClips({
   const endpoint = `/api/clips?${params.toString()}`;
 
   if (isDev) {
-    console.info('[ClipLex:API] Solicitando clips ->', { word, targetLang, uiLang });
+    console.info('[Lingua:API] Solicitando clips ->', { word, targetLang, uiLang });
   }
 
   try {
@@ -18,7 +18,7 @@ export async function fetchWordClips({
     const data = await res.json().catch(() => null);
 
     if (!res.ok) {
-      console.error('[ClipLex:API] Respuesta no OK:', {
+      console.error('[Lingua:API] Respuesta no OK:', {
         status: res.status,
         endpoint,
         body: data,
@@ -37,15 +37,15 @@ export async function fetchWordClips({
     }
 
     if (!Array.isArray(data) && !Array.isArray(data?.clips)) {
-      console.warn('[ClipLex:API] Formato inesperado en /api/clips:', data);
+      console.warn('[Lingua:API] Formato inesperado en /api/clips:', data);
     } else if (isDev) {
-      console.info(`[ClipLex:API] Recibidos ${clips.length} clips para "${word}"`);
+      console.info(`[Lingua:API] Recibidos ${clips.length} clips para "${word}"`);
     }
 
     return clips;
   } catch (err) {
     if (err.name !== 'AbortError') {
-      console.error('[ClipLex:API] Falló fetchWordClips:', err.message);
+      console.error('[Lingua:API] Falló fetchWordClips:', err.message);
     }
     throw err;
   }
@@ -65,7 +65,7 @@ export async function lookupWord({ word, targetLang, uiLang, sentenceContext = '
   const endpoint = `/api/lookup?${params.toString()}`;
 
   if (isDev) {
-    console.info('[ClipLex:API] Consultando palabra ->', { word, targetLang, uiLang });
+    console.info('[Lingua:API] Consultando palabra ->', { word, targetLang, uiLang });
   }
 
   try {
@@ -74,7 +74,7 @@ export async function lookupWord({ word, targetLang, uiLang, sentenceContext = '
 
     if (!res.ok) {
       if (isDev) {
-        console.warn('[ClipLex:API] /api/lookup no disponible o con error:', res.status, data);
+        console.warn('[Lingua:API] /api/lookup no disponible o con error:', res.status, data);
       }
       return {
         word,
@@ -87,7 +87,7 @@ export async function lookupWord({ word, targetLang, uiLang, sentenceContext = '
     return data;
   } catch (err) {
     if (isDev) {
-      console.warn('[ClipLex:API] Falló lookupWord (usando respaldo):', err.message);
+      console.warn('[Lingua:API] Falló lookupWord (usando respaldo):', err.message);
     }
     return {
       word,
@@ -102,7 +102,7 @@ export async function evaluateSentence({ word, sentence, targetLang, uiLang }) {
   const endpoint = '/api/evaluate';
 
   if (isDev) {
-    console.info('[ClipLex:API] Evaluando frase ->', { word, sentence, targetLang, uiLang });
+    console.info('[Lingua:API] Evaluando frase ->', { word, sentence, targetLang, uiLang });
   }
 
   try {
@@ -116,7 +116,7 @@ export async function evaluateSentence({ word, sentence, targetLang, uiLang }) {
 
     if (!res.ok) {
       if (isDev) {
-        console.warn('[ClipLex:API] /api/evaluate no disponible o con error:', res.status, data);
+        console.warn('[Lingua:API] /api/evaluate no disponible o con error:', res.status, data);
       }
       const containsWord =
         typeof sentence === 'string' &&
@@ -135,7 +135,7 @@ export async function evaluateSentence({ word, sentence, targetLang, uiLang }) {
     return data;
   } catch (err) {
     if (isDev) {
-      console.warn('[ClipLex:API] Falló evaluateSentence (usando respaldo):', err.message);
+      console.warn('[Lingua:API] Falló evaluateSentence (usando respaldo):', err.message);
     }
     return {
       score: 75,

@@ -13,11 +13,17 @@ import { LANGUAGES } from './config/languages.js';
 import useVault from './hooks/useVault.js';
 import useProfileSettings from './hooks/useProfileSettings.js';
 import useWordClips from './hooks/useWordClips.js';
-import { evaluateSentence, generateClips, importVideo } from './services/apiClient.js';
+import { evaluateSentence, fetchWordClips, importVideo } from './services/apiClient.js';
+
+const EMPTY_VAULT = [];
 
 export default function App() {
   const [uiLang, setUiLang] = useState('es');
   const [targetLang, setTargetLang] = useState('en');
+  const [vaultLanguage, setVaultLanguage] = useState('en');
+  const [mixedClips, setMixedClips] = useState([]);
+  const [isSearchingVault, setIsSearchingVault] = useState(false);
+  const [vaultSearchError, setVaultSearchError] = useState('');
   const [activeTab, setActiveTab] = useState('immersion');
   const [activeWordIndex, setActiveWordIndex] = useState(0);
   const [activeClipIndex, setActiveClipIndex] = useState(0);
@@ -38,16 +44,16 @@ export default function App() {
   const [importedLesson, setImportedLesson] = useState(null);
   const [importError, setImportError] = useState('');
   const [isProcessingImport, setIsProcessingImport] = useState(false);
-  const [isGeneratingAiClips, setIsGeneratingAiClips] = useState(false);
   const { settings: profileSettings, updateSettings: updateProfileSettings } = useProfileSettings();
   const availableLanguages = LANGUAGES.filter(
     (language) => profileSettings.learningLanguages.includes(language.code)
   );
-  const { wordList, setWordList, isLoading, error: clipsError, loadWordClips } = useWordClips(
+  const { wordList, isLoading, error: clipsError, loadWordClips } = useWordClips(
     targetLang,
     uiLang
   );
-  const { vaultWords, toggleVault, isWordInVault, rateRecall, storageError } = useVault();
+  const { vaults, toggleVault, addWord, removeWord, isWordInVault, rateRecall, storageError } = useVault();
+  const vaultWords = vaults[vaultLanguage] || EMPTY_VAULT;
   const translations = UI_TRANSLATIONS[uiLang] || UI_TRANSLATIONS.es;
 
   const resetDeck = () => {
@@ -146,26 +152,49 @@ export default function App() {
     }
   }
 
-  async function generateAiClipsForWord(word) {
-    setIsGeneratingAiClips(true);
+  async function searchAndMixVaultClips(language, selectedWords) {
+    if (!selectedWords.length) return;
+    setIsSearchingVault(true);
+    setVaultSearchError('');
+    setMixedClips([]);
     try {
-      const generated = await generateClips({ word, targetLang, uiLang });
-      const newWord = {
-        word: generated.word,
-        phonetic: generated.phonetic,
-        dictionaryMeaning: { [uiLang]: generated.slangContext || '' },
-        slangContext: generated.slangContext,
-        clips: generated.clips
-      };
-      setWordList((current) => [newWord, ...current]);
-      setActiveWordIndex(0);
-      setActiveClipIndex(0);
+      const vocabulary = vaults[language] || [];
+      const results = await Promise.allSettled(selectedWords.map(async (word) => {
+        const clips = await fetchWordClips({ word, targetLang: language, uiLang });
+        const wordEntry = vocabulary.find((item) => item.word.toLowerCase() === word.toLowerCase());
+        return clips.map((clip) => ({ ...clip, keyword: word, vocabularyWord: wordEntry }));
+      }));
+      const failedSearches = results.filter((result) => result.status === 'rejected');
+      const uniqueClips = new Map();
+      results
+        .filter((result) => result.status === 'fulfilled')
+        .flatMap((result) => result.value)
+        .forEach((clip) => {
+          const key = `${clip.videoId}:${clip.startSec || 0}`;
+          if (!uniqueClips.has(key)) uniqueClips.set(key, clip);
+        });
+      const clips = [...uniqueClips.values()];
+      for (let index = clips.length - 1; index > 0; index -= 1) {
+        const randomIndex = Math.floor(Math.random() * (index + 1));
+        [clips[index], clips[randomIndex]] = [clips[randomIndex], clips[index]];
+      }
+      if (!clips.length) {
+        const details = failedSearches.map((result) => result.reason?.message).filter(Boolean);
+        throw new Error(details.join(' ') || 'No se encontraron clips para las palabras seleccionadas.');
+      }
+      setMixedClips(clips.slice(0, 10));
+      if (failedSearches.length) {
+        const failedWords = selectedWords.filter((_, index) => results[index].status === 'rejected');
+        setVaultSearchError(`Sin resultados para: ${failedWords.join(', ')}. Se mezclaron los clips disponibles.`);
+      }
+      setVaultLanguage(language);
+      setTargetLang(language);
       setActiveTab('immersion');
     } catch (error) {
-      console.error('Could not generate learning clips:', error);
-      window.alert(error.message);
+      console.error('Could not search vault vocabulary clips:', error);
+      setVaultSearchError(error.message || 'No se pudieron buscar clips.');
     } finally {
-      setIsGeneratingAiClips(false);
+      setIsSearchingVault(false);
     }
   }
 
@@ -202,7 +231,9 @@ export default function App() {
   }
 
   function rateCurrentRecall(rating) {
-    if (currentWord && isWordInVault(currentWord.word)) rateRecall(currentWord.word, rating);
+    if (currentWord && isWordInVault(currentWord.word, targetLang)) {
+      rateRecall(currentWord.word, rating, targetLang);
+    }
     setSrsRevealed(false);
     advanceWord();
   }
@@ -211,7 +242,9 @@ export default function App() {
     updateProfileSettings(patch);
     if (patch.learningLanguages && !patch.learningLanguages.includes(targetLang)) {
       resetDeck();
+      setMixedClips([]);
       setTargetLang(patch.learningLanguages[0]);
+      setVaultLanguage(patch.learningLanguages[0]);
     }
   }
 
@@ -229,32 +262,35 @@ export default function App() {
           availableLanguages={availableLanguages}
           onTargetLanguageChange={(language) => {
             resetDeck();
+            setMixedClips([]);
             setTargetLang(language);
+            setVaultLanguage(language);
           }}
           onUiLanguageChange={setUiLang}
         />
         <main className="flex-1 relative overflow-hidden flex flex-col bg-slate-950">
-          {(clipsError || storageError) && (
+          {(clipsError || storageError || vaultSearchError) && (
             <p role="alert" className="absolute top-2 left-2 right-2 z-40 rounded-xl bg-rose-950/90 p-2 text-[10px] text-rose-200">
-              {clipsError || storageError}
+              {vaultSearchError || clipsError || storageError}
             </p>
           )}
           {activeTab === 'immersion' && (
             <ReelsFeed
               word={currentWord}
               clip={currentClip}
-              isLoading={isLoading}
+              feedClips={mixedClips.length ? mixedClips : undefined}
+              isLoading={isLoading && mixedClips.length === 0}
               clipIndex={activeClipIndex}
               playbackSpeed={playbackSpeed}
               isPlaying={isPlaying}
-              isSaved={currentWord ? isWordInVault(currentWord.word) : false}
+              isSaved={currentWord ? isWordInVault(currentWord.word, targetLang) : false}
               hideTranslation={hideTranslation}
               uiLang={uiLang}
               translations={translations}
               onSetPlaybackSpeed={setPlaybackSpeed}
               onPlaySentence={(sentence) => playClipAudio(sentence)}
               onPlayWord={() => playClipAudio(currentWord?.word, targetLang, 0.9)}
-              onToggleVault={() => toggleVault(currentWord)}
+              onToggleVault={() => currentWord && toggleVault(currentWord, targetLang)}
               onToggleTranslation={() => setHideTranslation((hidden) => !hidden)}
               onSelectWord={(selection) => setSelectedWordModal({ ...selection, targetLang })}
               onNextClip={goToNextClip}
@@ -295,11 +331,15 @@ export default function App() {
           {activeTab === 'vault' && (
             <VaultView
               words={vaultWords}
+              languages={LANGUAGES}
+              targetLang={vaultLanguage}
               uiLang={uiLang}
               translations={translations}
-              onGenerateClips={generateAiClipsForWord}
-              isGenerating={isGeneratingAiClips}
-              onRemove={toggleVault}
+              onAdd={addWord}
+              onLanguageChange={setVaultLanguage}
+              onSearchAndMix={searchAndMixVaultClips}
+              isSearching={isSearchingVault}
+              onRemove={(word) => removeWord(word.word, vaultLanguage)}
             />
           )}
           {activeTab === 'import' && (
@@ -329,7 +369,7 @@ export default function App() {
               word: selectedWordModal?.word,
               phonetic: '/native/',
               dictionaryMeaning: fallbackMeaning ? { [uiLang]: fallbackMeaning } : {}
-            });
+            }, selectedWordModal?.targetLang || targetLang);
             setSelectedWordModal(null);
           }}
         />

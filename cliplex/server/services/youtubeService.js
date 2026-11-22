@@ -1,7 +1,7 @@
 import { YoutubeTranscript } from 'youtube-transcript';
 
-const SEARCH_RESULT_LIMIT = 20;
-const CLIP_RESULT_LIMIT = 5;
+const SEARCH_RESULT_LIMIT = 50;
+const CLIP_RESULT_LIMIT = 10;
 const TRANSCRIPT_LANGUAGES = {
   en: ['en', 'en-US', 'en-GB'],
   es: ['es', 'es-ES', 'es-MX'],

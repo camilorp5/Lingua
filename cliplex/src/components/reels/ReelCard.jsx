@@ -12,7 +12,8 @@ export default function ReelCard({
   const playerRef = useRef(null);
   const isPlayerReadyRef = useRef(false);
 
-  const [isPlaying, setIsPlaying] = useState(false);
+  const [isPlayerReady, setIsPlayerReady] = useState(false);
+  const [pauseIndicator, setPauseIndicator] = useState('hidden');
   const [playbackRate, setPlaybackRate] = useState(1);
   // 'height' = llena el alto y recorta horizontales | 'width' = ajusta al ancho sin recortar
   const [fitMode, setFitMode] = useState('height');
@@ -78,12 +79,19 @@ export default function ReelCard({
       const state = player.getPlayerState();
       if (state === 1 || state === 3) {
         player.pauseVideo();
+        setPauseIndicator('visible');
       } else {
+        setPauseIndicator('hidden');
         player.playVideo();
       }
     } catch {
-      setIsPlaying(false);
+      setPauseIndicator('hidden');
     }
+  };
+
+  const handleScreenClick = (event) => {
+    if (event.target.closest('button, a, input, select, textarea, [data-no-playback-toggle]')) return;
+    togglePlayback();
   };
 
   const opts = {
@@ -109,7 +117,10 @@ export default function ReelCard({
       : 'w-full aspect-video pointer-events-none transition-all duration-300';
 
   return (
-    <div className="w-full h-full relative bg-black overflow-hidden flex items-center justify-center">
+    <div
+      className="w-full h-full relative bg-black overflow-hidden flex items-center justify-center"
+      onClick={handleScreenClick}
+    >
       {clip?.videoId ? (
         shouldMountPlayer ? (
           <div className={frameClass}>
@@ -122,6 +133,7 @@ export default function ReelCard({
               onReady={(e) => {
                 playerRef.current = e.target;
                 isPlayerReadyRef.current = true;
+                setIsPlayerReady(true);
                 try {
                   e.target.setPlaybackRate(playbackRate);
                   if (isActive) {
@@ -135,14 +147,15 @@ export default function ReelCard({
                 }
               }}
               onStateChange={(e) => {
-                if (e.data === 1) setIsPlaying(true);
-                if (e.data === 2 || e.data === 0) setIsPlaying(false);
+                if (e.data === 1) {
+                  setPauseIndicator('hidden');
+                }
                 if (e.data === 0 && isActive) {
                   e.target.seekTo(clip.startSec || 0, true);
                   e.target.playVideo();
                 }
               }}
-              onError={() => setIsPlaying(false)}
+              onError={() => setPauseIndicator('hidden')}
             />
           </div>
         ) : (
@@ -167,25 +180,17 @@ export default function ReelCard({
         </div>
       )}
 
-      {clip?.videoId && shouldMountPlayer && (
-        <button
-          type="button"
-          onClick={togglePlayback}
-          aria-label={isPlaying ? 'Pausar video' : 'Reproducir video'}
-          title={isPlaying ? 'Pausar video' : 'Reproducir video'}
-          className="absolute left-1/2 top-1/2 z-30 flex h-12 w-12 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-white/40 bg-black/55 text-white shadow-lg backdrop-blur-sm transition hover:bg-black/75 focus:outline-none focus:ring-2 focus:ring-amber-400"
+      {clip?.videoId && shouldMountPlayer && isPlayerReady && pauseIndicator !== 'hidden' && isActive && (
+        <div
+          aria-label="Video pausado"
+          className={`pointer-events-none absolute left-1/2 top-1/2 z-30 flex h-9 w-9 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-black/60 text-white shadow-lg backdrop-blur-sm transition-opacity duration-200 ${
+            pauseIndicator === 'visible' ? 'opacity-100' : 'opacity-0'
+          }`}
         >
-          {isPlaying ? (
-            <svg aria-hidden="true" className="h-4 w-4 fill-current" viewBox="0 0 16 16">
-              <rect x="3" y="2" width="3.5" height="12" rx="1" />
-              <rect x="9.5" y="2" width="3.5" height="12" rx="1" />
-            </svg>
-          ) : (
-            <svg aria-hidden="true" className="h-4 w-4 fill-current translate-x-px" viewBox="0 0 16 16">
-              <path d="M4 2.5a1 1 0 0 1 1.5-.86l8 5a1.6 1.6 0 0 1 0 2.72l-8 5A1 1 0 0 1 4 13.5z" />
-            </svg>
-          )}
-        </button>
+          <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4 fill-current">
+            <path d="M6 5h4v14H6zm8 0h4v14h-4z" />
+          </svg>
+        </div>
       )}
 
       {/* Gradiente para mejorar contraste de texto */}
@@ -250,7 +255,11 @@ export default function ReelCard({
               return (
                 <span
                   key={i}
-                  onClick={() => onWordTap?.(clean, clip.targetSentence)}
+                  data-no-playback-toggle
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onWordTap?.(clean, clip.targetSentence);
+                  }}
                   className={`inline-block mx-0.5 px-1 rounded cursor-pointer transition-colors ${
                     isTarget ? 'bg-amber-400 text-black font-black' : 'hover:bg-white/20'
                   }`}

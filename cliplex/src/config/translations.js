@@ -1,6 +1,6 @@
 export const UI_TRANSLATIONS = {
   es: {
-    appTitle: 'ClipLex',
+    appTitle: 'Lingua',
     subtitle: 'Aprende idiomas con Reels reales',
     immersion: 'Inmersión',
     friction: 'Fricción',
@@ -49,7 +49,7 @@ export const UI_TRANSLATIONS = {
     analyzing: 'Analizando subtítulos y contexto...'
   },
   en: {
-    appTitle: 'ClipLex',
+    appTitle: 'Lingua',
     subtitle: 'Learn languages with real Reels',
     immersion: 'Immersion',
     friction: 'Friction',
@@ -98,7 +98,7 @@ export const UI_TRANSLATIONS = {
     analyzing: 'Analyzing subtitles and context...'
   },
   pt: {
-    appTitle: 'ClipLex',
+    appTitle: 'Lingua',
     subtitle: 'Aprenda idiomas com Reels reais',
     immersion: 'Imersão',
     friction: 'Fricção',
@@ -147,7 +147,7 @@ export const UI_TRANSLATIONS = {
     analyzing: 'Analisando vídeo e legendas...'
   },
   it: {
-    appTitle: 'ClipLex',
+    appTitle: 'Lingua',
     subtitle: 'Impara le lingue con veri Reels',
     immersion: 'Immersione',
     friction: 'Frizione',
@@ -196,7 +196,7 @@ export const UI_TRANSLATIONS = {
     analyzing: 'Analisi dei sottotitoli in corso...'
   },
   de: {
-    appTitle: 'ClipLex',
+    appTitle: 'Lingua',
     subtitle: 'Sprachen lernen mit echten Reels',
     immersion: 'Immersion',
     friction: 'Frequenz',

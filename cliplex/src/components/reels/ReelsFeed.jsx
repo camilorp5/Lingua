@@ -4,6 +4,7 @@ import ReelCard from './ReelCard';
 export default function ReelsFeed({
   word,
   clip,
+  feedClips,
   isLoading,
   uiLang,
   hideTranslation,
@@ -18,13 +19,19 @@ export default function ReelsFeed({
   const containerRef = useRef(null);
 
   // Extrae el array de clips desde `word.clips` o usa `clip` como respaldo
-  const clips = Array.isArray(word?.clips)
+  const clips = Array.isArray(feedClips)
+    ? feedClips
+    : Array.isArray(word?.clips)
     ? word.clips
     : clip
       ? [clip]
       : [];
 
   const keyword = word?.word || '';
+
+  useEffect(() => {
+    if (containerRef.current) containerRef.current.scrollTop = 0;
+  }, [feedClips]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -45,9 +52,9 @@ export default function ReelsFeed({
     cards.forEach((card) => observer.observe(card));
 
     return () => observer.disconnect();
-  }, [clips.length]);
+  }, [feedClips, word?.word, clips.length]);
 
-  if (isLoading) {
+  if (isLoading && !feedClips) {
     return (
       <div className="w-full h-full flex items-center justify-center bg-black text-amber-300 text-sm font-semibold">
         Buscando Reels reales en YouTube...
@@ -80,7 +87,7 @@ export default function ReelsFeed({
         >
           <ReelCard
             clip={item}
-            keyword={keyword}
+            keyword={item.keyword || keyword}
             isActive={index === activeIndex}
             uiLang={uiLang}
             hideTranslation={hideTranslation}
