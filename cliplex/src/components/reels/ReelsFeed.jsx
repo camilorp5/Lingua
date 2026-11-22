@@ -14,6 +14,7 @@ export default function ReelsFeed({
   onToggleVault,
   onToggleTranslation,
   onSelectWord,
+  onVideoWatched,
 }) {
   const [activeIndex, setActiveIndex] = useState(0);
   const containerRef = useRef(null);
@@ -65,9 +66,9 @@ export default function ReelsFeed({
   if (clips.length === 0) {
     return (
       <div className="w-full h-full flex flex-col items-center justify-center bg-black text-slate-400 p-6 text-center">
-        <p className="text-sm font-semibold">No hay clips disponibles para esta palabra</p>
+        <p className="text-sm font-semibold">No hay clips nuevos disponibles para esta palabra</p>
         <p className="text-xs text-slate-500 mt-1">
-          Prueba con otro idioma o palabra.
+          Prueba otra palabra o cambia de perfil para consultar su historial.
         </p>
       </div>
     );
@@ -96,6 +97,7 @@ export default function ReelsFeed({
             onSetPlaybackSpeed={onSetPlaybackSpeed}
             onToggleTranslation={onToggleTranslation}
             onSaveVault={onToggleVault}
+            onVideoWatched={onVideoWatched}
             onWordTap={(cleanWord, sentenceContext) =>
               onSelectWord?.({ word: cleanWord, sentenceContext })
             }

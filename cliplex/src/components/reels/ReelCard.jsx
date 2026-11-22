@@ -8,6 +8,7 @@ export default function ReelCard({
   shouldMountPlayer = true,
   hideTranslation = false,
   onWordTap,
+  onVideoWatched,
 }) {
   const playerRef = useRef(null);
   const isPlayerReadyRef = useRef(false);
@@ -151,6 +152,10 @@ export default function ReelCard({
                   setPauseIndicator('hidden');
                 }
                 if (e.data === 0 && isActive) {
+                  if (onVideoWatched) {
+                    onVideoWatched(clip);
+                    return;
+                  }
                   e.target.seekTo(clip.startSec || 0, true);
                   e.target.playVideo();
                 }

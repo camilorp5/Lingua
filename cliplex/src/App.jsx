@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Header from './components/layout/Header.jsx';
 import BottomNav from './components/layout/BottomNav.jsx';
 import FrictionView from './components/friction/FrictionView.jsx';
@@ -44,7 +44,19 @@ export default function App() {
   const [importedLesson, setImportedLesson] = useState(null);
   const [importError, setImportError] = useState('');
   const [isProcessingImport, setIsProcessingImport] = useState(false);
-  const { settings: profileSettings, updateSettings: updateProfileSettings } = useProfileSettings();
+  const {
+    profiles,
+    activeProfileId,
+    settings: profileSettings,
+    watchedVideoCount,
+    storageError: profileStorageError,
+    updateSettings: updateProfileSettings,
+    createProfile,
+    selectProfile,
+    registerVideos,
+    markVideoWatched,
+    isVideoWatched
+  } = useProfileSettings();
   const availableLanguages = LANGUAGES.filter(
     (language) => profileSettings.learningLanguages.includes(language.code)
   );
@@ -66,7 +78,15 @@ export default function App() {
   };
 
   const currentWord = wordList[activeWordIndex];
-  const currentClip = currentWord?.clips?.[activeClipIndex] || currentWord?.clips?.[0];
+  const currentWordClips = useMemo(
+    () => (currentWord?.clips || []).filter((clip) => !isVideoWatched(targetLang, clip.videoId)),
+    [currentWord?.clips, isVideoWatched, targetLang]
+  );
+  const visibleMixedClips = useMemo(
+    () => mixedClips.filter((clip) => !isVideoWatched(vaultLanguage, clip.videoId)),
+    [isVideoWatched, mixedClips, vaultLanguage]
+  );
+  const currentClip = currentWordClips[activeClipIndex] || currentWordClips[0];
 
   useEffect(() => {
     if (!currentWord?.word) return undefined;
@@ -74,6 +94,14 @@ export default function App() {
     loadWordClips(currentWord.word, controller.signal);
     return () => controller.abort();
   }, [currentWord?.word, loadWordClips]);
+
+  useEffect(() => {
+    registerVideos(targetLang, wordList.flatMap((item) => item.clips || []));
+  }, [activeProfileId, registerVideos, targetLang, wordList]);
+
+  useEffect(() => {
+    registerVideos(vaultLanguage, mixedClips);
+  }, [activeProfileId, registerVideos, vaultLanguage, mixedClips]);
 
   function playClipAudio(textToSpeak, langCode = targetLang, speed = playbackSpeed, muteWord = false) {
     if (!('speechSynthesis' in window)) {
@@ -173,14 +201,21 @@ export default function App() {
           const key = `${clip.videoId}:${clip.startSec || 0}`;
           if (!uniqueClips.has(key)) uniqueClips.set(key, clip);
         });
-      const clips = [...uniqueClips.values()];
+      const availableClips = [...uniqueClips.values()];
+      if (!availableClips.length) {
+        const details = failedSearches.map((result) => result.reason?.message).filter(Boolean);
+        throw new Error(details.join(' ') || 'No se encontraron clips para las palabras seleccionadas.');
+      }
+
+      const clips = availableClips.filter(
+        (clip) => !isVideoWatched(language, clip.videoId)
+      );
+      if (!clips.length) {
+        throw new Error('Ya viste todos los clips disponibles para estas palabras en este perfil.');
+      }
       for (let index = clips.length - 1; index > 0; index -= 1) {
         const randomIndex = Math.floor(Math.random() * (index + 1));
         [clips[index], clips[randomIndex]] = [clips[randomIndex], clips[index]];
-      }
-      if (!clips.length) {
-        const details = failedSearches.map((result) => result.reason?.message).filter(Boolean);
-        throw new Error(details.join(' ') || 'No se encontraron clips para las palabras seleccionadas.');
       }
       setMixedClips(clips.slice(0, 10));
       if (failedSearches.length) {
@@ -248,6 +283,19 @@ export default function App() {
     }
   }
 
+  function handleProfileSelect(profileId) {
+    const nextProfile = profiles.find((profile) => profile.id === profileId);
+    if (!nextProfile) return;
+    selectProfile(profileId);
+    const nextLanguage = nextProfile.settings.learningLanguages.includes(targetLang)
+      ? targetLang
+      : nextProfile.settings.learningLanguages[0];
+    resetDeck();
+    setMixedClips([]);
+    setTargetLang(nextLanguage);
+    setVaultLanguage(nextLanguage);
+  }
+
   const fallbackMeaning = selectedWordModal
     ? currentWord?.dictionaryMeaning?.[uiLang] || currentWord?.dictionaryMeaning?.es || ''
     : '';
@@ -269,16 +317,16 @@ export default function App() {
           onUiLanguageChange={setUiLang}
         />
         <main className="flex-1 relative overflow-hidden flex flex-col bg-slate-950">
-          {(clipsError || storageError || vaultSearchError) && (
+          {(clipsError || storageError || profileStorageError || vaultSearchError) && (
             <p role="alert" className="absolute top-2 left-2 right-2 z-40 rounded-xl bg-rose-950/90 p-2 text-[10px] text-rose-200">
-              {vaultSearchError || clipsError || storageError}
+              {vaultSearchError || clipsError || storageError || profileStorageError}
             </p>
           )}
           {activeTab === 'immersion' && (
             <ReelsFeed
-              word={currentWord}
+              word={currentWord ? { ...currentWord, clips: currentWordClips } : currentWord}
               clip={currentClip}
-              feedClips={mixedClips.length ? mixedClips : undefined}
+              feedClips={mixedClips.length ? visibleMixedClips : undefined}
               isLoading={isLoading && mixedClips.length === 0}
               clipIndex={activeClipIndex}
               playbackSpeed={playbackSpeed}
@@ -293,6 +341,7 @@ export default function App() {
               onToggleVault={() => currentWord && toggleVault(currentWord, targetLang)}
               onToggleTranslation={() => setHideTranslation((hidden) => !hidden)}
               onSelectWord={(selection) => setSelectedWordModal({ ...selection, targetLang })}
+              onVideoWatched={(clip) => markVideoWatched(targetLang, clip.videoId)}
               onNextClip={goToNextClip}
             />
           )}
@@ -354,7 +403,19 @@ export default function App() {
             />
           )}
           {activeTab === 'profile' && (
-            <ProfileView settings={profileSettings} onUpdate={handleProfileSettingsUpdate} />
+            <ProfileView
+              profiles={profiles}
+              activeProfileId={activeProfileId}
+              settings={profileSettings}
+              watchedVideoCount={watchedVideoCount}
+              onSelectProfile={handleProfileSelect}
+              onCreateProfile={(name) => {
+                createProfile(name);
+                resetDeck();
+                setMixedClips([]);
+              }}
+              onUpdate={handleProfileSettingsUpdate}
+            />
           )}
         </main>
         <WordModal
