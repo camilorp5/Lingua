@@ -30,8 +30,11 @@ function isLanguageMatch(language, expectedLanguage) {
 }
 
 function isNativeVideo(snippet, lang) {
-  return isLanguageMatch(snippet?.defaultLanguage, lang)
-    || isLanguageMatch(snippet?.defaultAudioLanguage, lang);
+  const declaredLanguages = [snippet?.defaultLanguage, snippet?.defaultAudioLanguage]
+    .filter((language) => typeof language === 'string' && language.trim());
+
+  return declaredLanguages.length === 0
+    || declaredLanguages.some((language) => isLanguageMatch(language, lang));
 }
 
 function createWordRegex(word) {
@@ -73,6 +76,7 @@ export async function findClipsForWord(word, lang = 'en') {
     {
       part: 'snippet',
       type: 'video',
+      videoCaption: 'closedCaption',
       relevanceLanguage: lang,
       maxResults: String(SEARCH_RESULT_LIMIT),
       q: word
@@ -102,7 +106,10 @@ export async function findClipsForWord(word, lang = 'en') {
   );
   const regex = createWordRegex(word);
   const matchedClips = [];
-  let nonNativeCount = 0;
+  let languageMismatchCount = 0;
+  let transcriptAttempts = 0;
+  let transcriptFailures = 0;
+  let transcriptSuccesses = 0;
 
   for (const item of candidates) {
     if (matchedClips.length >= CLIP_RESULT_LIMIT) break;
@@ -116,15 +123,17 @@ export async function findClipsForWord(word, lang = 'en') {
       defaultAudioLanguage: details.defaultAudioLanguage || item.snippet.defaultAudioLanguage
     };
     if (!isNativeVideo(snippet, lang)) {
-      nonNativeCount += 1;
+      languageMismatchCount += 1;
       continue;
     }
 
     try {
+      transcriptAttempts += 1;
       const transcript = await fetchVideoTranscript(
         videoId,
         getTranscriptLanguageOptions(lang, snippet)
       );
+      transcriptSuccesses += 1;
       const matchIndex = transcript.findIndex((line) => regex.test(line.text));
       if (matchIndex === -1) continue;
 
@@ -147,12 +156,23 @@ export async function findClipsForWord(word, lang = 'en') {
         targetSentence: fullSentence
       });
     } catch (error) {
+      transcriptFailures += 1;
       console.warn(`[YouTube API] No se pudieron leer subtítulos de ${videoId}: ${error.message}`);
     }
   }
 
-  console.log(`[YouTube API] Videos descartados por idioma nativo: ${nonNativeCount}`);
+  console.log(
+    `[YouTube API] Idioma distinto: ${languageMismatchCount}; `
+    + `subtítulos obtenidos: ${transcriptSuccesses}; `
+    + `errores de subtítulos: ${transcriptFailures}/${transcriptAttempts}`
+  );
   if (matchedClips.length === 0) {
+    if (transcriptAttempts > 0 && transcriptFailures === transcriptAttempts) {
+      const error = new Error('YouTube devolvió videos con subtítulos, pero no fue posible obtener sus transcripciones.');
+      error.status = 502;
+      throw error;
+    }
+
     const error = new Error(`No se encontraron videos en ${lang} con subtítulos que contengan "${word}".`);
     error.status = 404;
     throw error;
