@@ -60,7 +60,7 @@ export default function ReelsFeed({
       <div className="w-full h-full flex flex-col items-center justify-center bg-black text-slate-400 p-6 text-center">
         <p className="text-sm font-semibold">No hay clips disponibles para esta palabra</p>
         <p className="text-xs text-slate-500 mt-1">
-          Prueba cambiando de idioma o categoría.
+          Prueba con otro idioma o palabra.
         </p>
       </div>
     );

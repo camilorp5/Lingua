@@ -11,37 +11,19 @@ app.use(express.json());
 const memoryCache = new Map();
 
 app.get('/api/clips', async (req, res) => {
-  const {
-    word,
-    targetLang = 'en',
-    uiLang = 'es',
-    videoDuration = 'short',
-    relevanceLanguage = targetLang
-  } = req.query;
-  console.log(`[Server] /api/clips -> word="${word}" targetLang=${targetLang} uiLang=${uiLang} videoDuration=${videoDuration} relevanceLanguage=${relevanceLanguage}`);
+  const { word, targetLang = 'en', uiLang = 'es' } = req.query;
+  console.log(`[Server] /api/clips -> word="${word}" targetLang=${targetLang} uiLang=${uiLang}`);
 
   if (!word) return res.status(400).json({ error: 'Falta la palabra' });
-  if (!['any', 'short', 'medium', 'long'].includes(videoDuration)) {
-    return res.status(400).json({ error: 'videoDuration debe ser any, short, medium o long.' });
-  }
-  if (!['en', 'es', 'pt', 'it', 'de'].includes(relevanceLanguage)) {
-    return res.status(400).json({ error: 'relevanceLanguage no es compatible.' });
-  }
 
-  const cacheKey = `${targetLang}:${uiLang}:${videoDuration}:${relevanceLanguage}:${word.toLowerCase()}`;
+  const cacheKey = `${targetLang}:${uiLang}:${word.toLowerCase()}`;
   const cachedClips = memoryCache.get(cacheKey);
   if (cachedClips?.length) {
     return res.json(memoryCache.get(cacheKey));
   }
 
   try {
-    const clips = await findClipsForWord(
-      word,
-      targetLang,
-      6,
-      videoDuration,
-      relevanceLanguage
-    );
+    const clips = await findClipsForWord(word, targetLang);
     console.log(`[Server] Clips encontrados para "${word}": ${clips.length}`);
     if (clips.length === 0) {
       return res.status(404).json({ error: `No se encontraron videos con subtítulos para "${word}".` });

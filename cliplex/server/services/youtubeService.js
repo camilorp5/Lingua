@@ -1,12 +1,66 @@
 import { YoutubeTranscript } from 'youtube-transcript';
 
-export async function findClipsForWord(
-  word,
-  lang = 'en',
-  maxResults = 6,
-  videoDuration = 'short',
-  relevanceLanguage = lang
-) {
+const SEARCH_RESULT_LIMIT = 20;
+const CLIP_RESULT_LIMIT = 5;
+const TRANSCRIPT_LANGUAGES = {
+  en: ['en', 'en-US', 'en-GB'],
+  es: ['es', 'es-ES', 'es-MX'],
+  pt: ['pt', 'pt-BR', 'pt-PT'],
+  it: ['it', 'it-IT'],
+  de: ['de', 'de-DE']
+};
+
+async function fetchYouTubeJson(endpoint, params, apiKey) {
+  const searchParams = new URLSearchParams({ ...params, key: apiKey });
+  const response = await fetch(`${endpoint}?${searchParams}`);
+  const data = await response.json().catch(() => null);
+
+  if (!response.ok || data?.error) {
+    const error = new Error(data?.error?.message || `YouTube request failed (${response.status}).`);
+    error.status = response.status === 403 ? 502 : response.status;
+    throw error;
+  }
+  return data;
+}
+
+function isLanguageMatch(language, expectedLanguage) {
+  if (typeof language !== 'string' || !language.trim()) return false;
+  const expectedBase = expectedLanguage.toLowerCase().split('-')[0];
+  return language.toLowerCase().split('-')[0] === expectedBase;
+}
+
+function isNativeVideo(snippet, lang) {
+  return isLanguageMatch(snippet?.defaultLanguage, lang)
+    || isLanguageMatch(snippet?.defaultAudioLanguage, lang);
+}
+
+function createWordRegex(word) {
+  const escapedWord = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?<![\\p{L}\\p{N}_])${escapedWord}(?![\\p{L}\\p{N}_])`, 'iu');
+}
+
+function getTranscriptLanguageOptions(lang, snippet) {
+  const baseLanguage = lang.toLowerCase().split('-')[0];
+  const regionalLanguages = TRANSCRIPT_LANGUAGES[baseLanguage] || [lang];
+  const videoLanguages = [snippet?.defaultAudioLanguage, snippet?.defaultLanguage]
+    .filter((language) => isLanguageMatch(language, lang));
+
+  return [...new Set([...videoLanguages, ...regionalLanguages, lang])];
+}
+
+async function fetchVideoTranscript(videoId, languages) {
+  let lastError;
+  for (const language of languages) {
+    try {
+      return await YoutubeTranscript.fetchTranscript(videoId, { lang: language });
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || new Error(`No transcript is available for ${videoId}.`);
+}
+
+export async function findClipsForWord(word, lang = 'en') {
   const apiKey = process.env.YOUTUBE_API_KEY;
   if (!apiKey) {
     const error = new Error('Falta YOUTUBE_API_KEY en cliplex/.env.');
@@ -14,68 +68,92 @@ export async function findClipsForWord(
     throw error;
   }
 
-  const query = encodeURIComponent(`"${word}" #shorts`);
-  const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&videoDuration=${encodeURIComponent(videoDuration)}&videoCaption=closedCaption&relevanceLanguage=${encodeURIComponent(relevanceLanguage)}&maxResults=${maxResults}&q=${query}&key=${encodeURIComponent(apiKey)}`;
-
-  const res = await fetch(url);
-  const data = await res.json().catch(() => null);
-
-  if (!res.ok || data.error) {
-    const error = new Error(data?.error?.message || `YouTube search failed (${res.status}).`);
-    error.status = res.status === 403 ? 502 : res.status;
-    throw error;
-  }
-
-  const items = Array.isArray(data.items) ? data.items : [];
-  console.log(`[YouTube API] Videos candidatos devueltos: ${items.length}`);
-  if (items.length === 0) {
-    const error = new Error(`YouTube no encontró videos cortos con subtítulos para "${word}".`);
+  const searchData = await fetchYouTubeJson(
+    'https://www.googleapis.com/youtube/v3/search',
+    {
+      part: 'snippet',
+      type: 'video',
+      relevanceLanguage: lang,
+      maxResults: String(SEARCH_RESULT_LIMIT),
+      q: word
+    },
+    apiKey
+  );
+  const candidates = Array.isArray(searchData.items) ? searchData.items : [];
+  console.log(`[YouTube API] Videos candidatos devueltos: ${candidates.length}`);
+  if (candidates.length === 0) {
+    const error = new Error(`YouTube no encontró videos para "${word}".`);
     error.status = 404;
     throw error;
   }
 
+  const videoIds = candidates.map((item) => item.id?.videoId).filter(Boolean);
+  const videoData = await fetchYouTubeJson(
+    'https://www.googleapis.com/youtube/v3/videos',
+    {
+      part: 'snippet',
+      id: videoIds.join(','),
+      fields: 'items(id,snippet(defaultLanguage,defaultAudioLanguage))'
+    },
+    apiKey
+  );
+  const videoDetails = new Map(
+    (videoData.items || []).map((video) => [video.id, video.snippet || {}])
+  );
+  const regex = createWordRegex(word);
   const matchedClips = [];
+  let nonNativeCount = 0;
 
-  for (const item of items) {
+  for (const item of candidates) {
+    if (matchedClips.length >= CLIP_RESULT_LIMIT) break;
     const videoId = item.id?.videoId;
     if (!videoId) continue;
 
+    const details = videoDetails.get(videoId) || {};
+    const snippet = {
+      ...item.snippet,
+      defaultLanguage: details.defaultLanguage || item.snippet.defaultLanguage,
+      defaultAudioLanguage: details.defaultAudioLanguage || item.snippet.defaultAudioLanguage
+    };
+    if (!isNativeVideo(snippet, lang)) {
+      nonNativeCount += 1;
+      continue;
+    }
+
     try {
-      const transcript = await YoutubeTranscript.fetchTranscript(videoId, { lang });
+      const transcript = await fetchVideoTranscript(
+        videoId,
+        getTranscriptLanguageOptions(lang, snippet)
+      );
+      const matchIndex = transcript.findIndex((line) => regex.test(line.text));
+      if (matchIndex === -1) continue;
 
-      const escapedWord = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const regex = new RegExp(`\\b${escapedWord}\\b`, 'i');
-      const matchIndex = transcript.findIndex(line => regex.test(line.text));
+      const segment = transcript[matchIndex];
+      const startSec = Math.max(0, Math.floor(segment.offset / 1000) - 1);
+      const endSec = Math.ceil((segment.offset + segment.duration) / 1000) + 2;
+      const fullSentence = [
+        transcript[matchIndex - 1]?.text,
+        segment.text,
+        transcript[matchIndex + 1]?.text
+      ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
 
-      if (matchIndex !== -1) {
-        const segment = transcript[matchIndex];
-        const startSec = Math.max(0, Math.floor(segment.offset / 1000) - 1);
-        const endSec = Math.ceil((segment.offset + segment.duration) / 1000) + 2;
-
-        const fullSentence = [
-          transcript[matchIndex - 1]?.text,
-          segment.text,
-          transcript[matchIndex + 1]?.text
-        ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
-
-        matchedClips.push({
-          id: `${videoId}_${startSec}`,
-          videoId,
-          creator: `@${item.snippet.channelTitle.replace(/\s+/g, '_').toLowerCase()}`,
-          title: item.snippet.title,
-          startSec,
-          endSec,
-          targetSentence: fullSentence,
-        });
-      }
+      matchedClips.push({
+        id: `${videoId}_${startSec}`,
+        videoId,
+        creator: `@${(snippet.channelTitle || 'youtube').replace(/\s+/g, '_').toLowerCase()}`,
+        title: snippet.title,
+        startSec,
+        endSec,
+        targetSentence: fullSentence
+      });
     } catch (error) {
       console.warn(`[YouTube API] No se pudieron leer subtítulos de ${videoId}: ${error.message}`);
-      continue;
     }
   }
 
+  console.log(`[YouTube API] Videos descartados por idioma nativo: ${nonNativeCount}`);
   if (matchedClips.length === 0) {
-    const error = new Error(`Se encontraron videos para "${word}", pero ninguno tiene subtítulos accesibles que contengan esa palabra.`);
+    const error = new Error(`No se encontraron videos en ${lang} con subtítulos que contengan "${word}".`);
     error.status = 404;
     throw error;
   }

@@ -4,17 +4,9 @@ export async function fetchWordClips({
   word,
   targetLang,
   uiLang,
-  videoDuration = 'short',
-  relevanceLanguage = targetLang,
   signal
 }) {
-  const params = new URLSearchParams({
-    word,
-    targetLang,
-    uiLang,
-    videoDuration,
-    relevanceLanguage
-  });
+  const params = new URLSearchParams({ word, targetLang, uiLang });
   const endpoint = `/api/clips?${params.toString()}`;
 
   if (isDev) {
@@ -52,7 +44,9 @@ export async function fetchWordClips({
 
     return clips;
   } catch (err) {
-    console.error('[ClipLex:API] Falló fetchWordClips:', err.message);
+    if (err.name !== 'AbortError') {
+      console.error('[ClipLex:API] Falló fetchWordClips:', err.message);
+    }
     throw err;
   }
 }

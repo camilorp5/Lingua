@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import CategoryBar from './components/layout/CategoryBar.jsx';
 import Header from './components/layout/Header.jsx';
 import BottomNav from './components/layout/BottomNav.jsx';
 import FrictionView from './components/friction/FrictionView.jsx';
@@ -20,7 +19,6 @@ export default function App() {
   const [uiLang, setUiLang] = useState('es');
   const [targetLang, setTargetLang] = useState('en');
   const [activeTab, setActiveTab] = useState('immersion');
-  const [selectedCategory, setSelectedCategory] = useState('all');
   const [activeWordIndex, setActiveWordIndex] = useState(0);
   const [activeClipIndex, setActiveClipIndex] = useState(0);
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
@@ -47,10 +45,7 @@ export default function App() {
   );
   const { wordList, setWordList, isLoading, error: clipsError, loadWordClips } = useWordClips(
     targetLang,
-    selectedCategory,
-    uiLang,
-    profileSettings.videoDuration,
-    profileSettings.relevanceLanguage
+    uiLang
   );
   const { vaultWords, toggleVault, isWordInVault, rateRecall, storageError } = useVault();
   const translations = UI_TRANSLATIONS[uiLang] || UI_TRANSLATIONS.es;
@@ -160,7 +155,6 @@ export default function App() {
         phonetic: generated.phonetic,
         dictionaryMeaning: { [uiLang]: generated.slangContext || '' },
         slangContext: generated.slangContext,
-        category: 'all',
         clips: generated.clips
       };
       setWordList((current) => [newWord, ...current]);
@@ -219,7 +213,6 @@ export default function App() {
       resetDeck();
       setTargetLang(patch.learningLanguages[0]);
     }
-    if (patch.videoDuration || patch.relevanceLanguage) resetDeck();
   }
 
   const fallbackMeaning = selectedWordModal
@@ -239,14 +232,6 @@ export default function App() {
             setTargetLang(language);
           }}
           onUiLanguageChange={setUiLang}
-        />
-        <CategoryBar
-          selectedCategory={selectedCategory}
-          uiLang={uiLang}
-          onSelectCategory={(category) => {
-            resetDeck();
-            setSelectedCategory(category);
-          }}
         />
         <main className="flex-1 relative overflow-hidden flex flex-col bg-slate-950">
           {(clipsError || storageError) && (

@@ -12,6 +12,7 @@ export default function ReelCard({
   const playerRef = useRef(null);
   const isPlayerReadyRef = useRef(false);
 
+  const [isPlaying, setIsPlaying] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1);
   // 'height' = llena el alto y recorta horizontales | 'width' = ajusta al ancho sin recortar
   const [fitMode, setFitMode] = useState('height');
@@ -69,6 +70,22 @@ export default function ReelCard({
     }
   };
 
+  const togglePlayback = () => {
+    const player = playerRef.current;
+    if (!player || !isPlayerReadyRef.current) return;
+
+    try {
+      const state = player.getPlayerState();
+      if (state === 1 || state === 3) {
+        player.pauseVideo();
+      } else {
+        player.playVideo();
+      }
+    } catch {
+      setIsPlaying(false);
+    }
+  };
+
   const opts = {
     width: '100%',
     height: '100%',
@@ -118,12 +135,14 @@ export default function ReelCard({
                 }
               }}
               onStateChange={(e) => {
-                // window.YT.PlayerState.ENDED === 0
+                if (e.data === 1) setIsPlaying(true);
+                if (e.data === 2 || e.data === 0) setIsPlaying(false);
                 if (e.data === 0 && isActive) {
                   e.target.seekTo(clip.startSec || 0, true);
                   e.target.playVideo();
                 }
               }}
+              onError={() => setIsPlaying(false)}
             />
           </div>
         ) : (
@@ -146,6 +165,27 @@ export default function ReelCard({
             Revisa los logs de tu terminal de backend para ver qué devolvió YouTube.
           </p>
         </div>
+      )}
+
+      {clip?.videoId && shouldMountPlayer && (
+        <button
+          type="button"
+          onClick={togglePlayback}
+          aria-label={isPlaying ? 'Pausar video' : 'Reproducir video'}
+          title={isPlaying ? 'Pausar video' : 'Reproducir video'}
+          className="absolute left-1/2 top-1/2 z-30 flex h-12 w-12 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-white/40 bg-black/55 text-white shadow-lg backdrop-blur-sm transition hover:bg-black/75 focus:outline-none focus:ring-2 focus:ring-amber-400"
+        >
+          {isPlaying ? (
+            <svg aria-hidden="true" className="h-4 w-4 fill-current" viewBox="0 0 16 16">
+              <rect x="3" y="2" width="3.5" height="12" rx="1" />
+              <rect x="9.5" y="2" width="3.5" height="12" rx="1" />
+            </svg>
+          ) : (
+            <svg aria-hidden="true" className="h-4 w-4 fill-current translate-x-px" viewBox="0 0 16 16">
+              <path d="M4 2.5a1 1 0 0 1 1.5-.86l8 5a1.6 1.6 0 0 1 0 2.72l-8 5A1 1 0 0 1 4 13.5z" />
+            </svg>
+          )}
+        </button>
       )}
 
       {/* Gradiente para mejorar contraste de texto */}

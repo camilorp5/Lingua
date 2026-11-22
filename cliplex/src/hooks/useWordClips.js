@@ -13,7 +13,6 @@ export const SAMPLE_DATABASE = {
         de: 'Kleiderschrank / Garderobe'
       },
       slangContext: 'Used both for bedroom furniture and personal fashion style collection.',
-      category: 'fashion',
       clips: [
         {
           id: 'en_w1',
@@ -83,7 +82,6 @@ export const SAMPLE_DATABASE = {
         de: 'Überwältigt / Überfordert'
       },
       slangContext: 'Very common in tech, corporate & daily vlogs for burnout.',
-      category: 'gaming',
       clips: [
         {
           id: 'en_o1',
@@ -127,7 +125,6 @@ export const SAMPLE_DATABASE = {
         de: 'Das gemütliche Beisammensein am Tisch nach dem Essen'
       },
       slangContext: 'Iconic Spanish cultural concept with no direct 1-word translation in English.',
-      category: 'cooking',
       clips: [
         {
           id: 'es_s1',
@@ -169,7 +166,6 @@ export const SAMPLE_DATABASE = {
         de: 'Früh am Morgen aufstehen'
       },
       slangContext: 'Verb specifically for morning risers.',
-      category: 'travel',
       clips: [
         {
           id: 'es_m1',
@@ -199,7 +195,6 @@ export const SAMPLE_DATABASE = {
         de: 'Sehnsucht nach einer Person oder Erinnerung'
       },
       slangContext: 'The most iconic Portuguese untranslatable emotional word.',
-      category: 'travel',
       clips: [
         {
           id: 'pt_s1',
@@ -227,7 +222,6 @@ export const SAMPLE_DATABASE = {
         de: 'Eine unangenehme Situation oder Reise-Panne'
       },
       slangContext: 'Slang term "Perrengue Chique" = fancy travel disaster.',
-      category: 'travel',
       clips: [
         {
           id: 'pt_p1',
@@ -257,7 +251,6 @@ export const SAMPLE_DATABASE = {
         de: 'Mühelose Eleganz und lässige Perfektion'
       },
       slangContext: 'The core philosophy of high Italian fashion & style.',
-      category: 'fashion',
       clips: [
         {
           id: 'it_sp1',
@@ -285,7 +278,6 @@ export const SAMPLE_DATABASE = {
         de: 'Schön wäre es! / Wenn doch nur'
       },
       slangContext: 'Extremely versatile expressive Italian word.',
-      category: 'cinema',
       clips: [
         {
           id: 'it_m1',
@@ -315,7 +307,6 @@ export const SAMPLE_DATABASE = {
         it: 'Forte desiderio di viaggiare in luoghi lontani'
       },
       slangContext: 'Literal translation: "Far-sickness".',
-      category: 'travel',
       clips: [
         {
           id: 'de_f1',
@@ -343,7 +334,6 @@ export const SAMPLE_DATABASE = {
         it: 'Fine della giornata lavorativa'
       },
       slangContext: 'Crucial German work-life balance concept.',
-      category: 'gaming',
       clips: [
         {
           id: 'de_fa1',
@@ -366,23 +356,16 @@ export const SAMPLE_DATABASE = {
 
 export default function useWordClips(
   targetLang,
-  category,
-  uiLang,
-  videoDuration,
-  relevanceLanguage
+  uiLang
 ) {
   const [wordLists, setWordLists] = useState({});
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
-  const listKey = `${targetLang}:${category}:${uiLang}:${videoDuration}:${relevanceLanguage}`;
+  const listKey = `${targetLang}:${uiLang}`;
   const sampleWords = useMemo(() => {
     const languageWords = SAMPLE_DATABASE[targetLang] || SAMPLE_DATABASE.en;
-    const matchingWords = category === 'all'
-      ? languageWords
-      : languageWords.filter((word) => word.category === category);
-    const selectedWords = matchingWords.length > 0 ? matchingWords : languageWords;
-    return selectedWords.map((word) => ({ ...word, clips: [] }));
-  }, [targetLang, category]);
+    return languageWords.map((word) => ({ ...word, clips: [] }));
+  }, [targetLang]);
   const wordList = wordLists[listKey] || sampleWords;
 
   const setWordList = useCallback((update) => {
@@ -400,14 +383,7 @@ export default function useWordClips(
     setError('');
 
     try {
-      const clips = await getClips({
-        word,
-        targetLang,
-        uiLang,
-        videoDuration,
-        relevanceLanguage,
-        signal
-      });
+      const clips = await getClips({ word, targetLang, uiLang, signal });
       const playableClips = clips.filter((clip) => /^[\w-]{11}$/.test(clip.videoId || ''));
       if (playableClips.length === 0) {
         throw new Error(`No se encontraron videos reproducibles para "${word}".`);
@@ -423,7 +399,7 @@ export default function useWordClips(
     } finally {
       if (!signal?.aborted) setIsLoading(false);
     }
-  }, [setWordList, targetLang, uiLang, videoDuration, relevanceLanguage]);
+  }, [setWordList, targetLang, uiLang]);
 
   return { wordList, setWordList, isLoading, error, loadWordClips };
 }

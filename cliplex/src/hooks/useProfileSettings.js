@@ -2,12 +2,9 @@ import { useEffect, useState } from 'react';
 import { LANGUAGES } from '../config/languages.js';
 
 const STORAGE_KEY = 'clipLex_profile_settings';
-const VIDEO_DURATIONS = ['any', 'short', 'medium', 'long'];
 const LANGUAGE_CODES = LANGUAGES.map(({ code }) => code);
 const DEFAULT_SETTINGS = {
-  learningLanguages: LANGUAGE_CODES,
-  videoDuration: 'short',
-  relevanceLanguage: 'en'
+  learningLanguages: LANGUAGE_CODES
 };
 
 function readSettings() {
@@ -20,11 +17,7 @@ function readSettings() {
       : DEFAULT_SETTINGS.learningLanguages;
 
     return {
-      learningLanguages: learningLanguages.length ? learningLanguages : DEFAULT_SETTINGS.learningLanguages,
-      videoDuration: VIDEO_DURATIONS.includes(saved.videoDuration) ? saved.videoDuration : DEFAULT_SETTINGS.videoDuration,
-      relevanceLanguage: LANGUAGE_CODES.includes(saved.relevanceLanguage)
-        ? saved.relevanceLanguage
-        : DEFAULT_SETTINGS.relevanceLanguage
+      learningLanguages: learningLanguages.length ? learningLanguages : DEFAULT_SETTINGS.learningLanguages
     };
   } catch (error) {
     console.error('Could not read profile settings:', error);
