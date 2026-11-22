@@ -1,0 +1,355 @@
+import { useEffect, useState } from 'react';
+import CategoryBar from './components/layout/CategoryBar.jsx';
+import Header from './components/layout/Header.jsx';
+import BottomNav from './components/layout/BottomNav.jsx';
+import FrictionView from './components/friction/FrictionView.jsx';
+import ImportView from './components/import/ImportView.jsx';
+import WordModal from './components/modals/WordModal.jsx';
+import ProfileView from './components/profile/ProfileView.jsx';
+import ReelsFeed from './components/reels/ReelsFeed.jsx';
+import SrsView from './components/srs/SrsView.jsx';
+import VaultView from './components/vault/VaultView.jsx';
+import { UI_TRANSLATIONS } from './config/translations.js';
+import { LANGUAGES } from './config/languages.js';
+import useVault from './hooks/useVault.js';
+import useProfileSettings from './hooks/useProfileSettings.js';
+import useWordClips from './hooks/useWordClips.js';
+import { evaluateSentence, generateClips, importVideo } from './services/apiClient.js';
+
+export default function App() {
+  const [uiLang, setUiLang] = useState('es');
+  const [targetLang, setTargetLang] = useState('en');
+  const [activeTab, setActiveTab] = useState('immersion');
+  const [selectedCategory, setSelectedCategory] = useState('all');
+  const [activeWordIndex, setActiveWordIndex] = useState(0);
+  const [activeClipIndex, setActiveClipIndex] = useState(0);
+  const [playbackSpeed, setPlaybackSpeed] = useState(1);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [hideTranslation, setHideTranslation] = useState(false);
+  const [selectedWordModal, setSelectedWordModal] = useState(null);
+  const [clozeInput, setClozeInput] = useState('');
+  const [clozeFeedback, setClozeFeedback] = useState(null);
+  const [isListeningSpeech, setIsListeningSpeech] = useState(false);
+  const [frictionError, setFrictionError] = useState('');
+  const [userSentence, setUserSentence] = useState('');
+  const [aiEvaluation, setAiEvaluation] = useState(null);
+  const [evaluationError, setEvaluationError] = useState('');
+  const [isEvaluatingSentence, setIsEvaluatingSentence] = useState(false);
+  const [srsRevealed, setSrsRevealed] = useState(false);
+  const [importUrl, setImportUrl] = useState('');
+  const [importedLesson, setImportedLesson] = useState(null);
+  const [importError, setImportError] = useState('');
+  const [isProcessingImport, setIsProcessingImport] = useState(false);
+  const [isGeneratingAiClips, setIsGeneratingAiClips] = useState(false);
+  const { settings: profileSettings, updateSettings: updateProfileSettings } = useProfileSettings();
+  const availableLanguages = LANGUAGES.filter(
+    (language) => profileSettings.learningLanguages.includes(language.code)
+  );
+  const { wordList, setWordList, isLoading, error: clipsError, loadWordClips } = useWordClips(
+    targetLang,
+    selectedCategory,
+    uiLang,
+    profileSettings.videoDuration,
+    profileSettings.relevanceLanguage
+  );
+  const { vaultWords, toggleVault, isWordInVault, rateRecall, storageError } = useVault();
+  const translations = UI_TRANSLATIONS[uiLang] || UI_TRANSLATIONS.es;
+
+  const resetDeck = () => {
+    setActiveWordIndex(0);
+    setActiveClipIndex(0);
+    setClozeInput('');
+    setClozeFeedback(null);
+    setUserSentence('');
+    setAiEvaluation(null);
+  };
+
+  const currentWord = wordList[activeWordIndex];
+  const currentClip = currentWord?.clips?.[activeClipIndex] || currentWord?.clips?.[0];
+
+  useEffect(() => {
+    if (!currentWord?.word) return undefined;
+    const controller = new AbortController();
+    loadWordClips(currentWord.word, controller.signal);
+    return () => controller.abort();
+  }, [currentWord?.word, loadWordClips]);
+
+  function playClipAudio(textToSpeak, langCode = targetLang, speed = playbackSpeed, muteWord = false) {
+    if (!('speechSynthesis' in window)) {
+      setFrictionError('Speech playback is not supported by this browser.');
+      return;
+    }
+
+    window.speechSynthesis.cancel();
+    const text = textToSpeak || '';
+    const cleanText = muteWord && currentWord
+      ? text.replace(new RegExp(currentWord.word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), '… ')
+      : text;
+    const utterance = new SpeechSynthesisUtterance(cleanText);
+    utterance.lang = LANGUAGES.find((language) => language.code === langCode)?.speechLang || 'en-US';
+    utterance.rate = speed;
+    utterance.onstart = () => setIsPlaying(true);
+    utterance.onend = () => setIsPlaying(false);
+    utterance.onerror = () => {
+      setIsPlaying(false);
+      setFrictionError('The browser could not play this speech.');
+    };
+    window.speechSynthesis.speak(utterance);
+  }
+
+  function checkClozeAnswer(input = clozeInput) {
+    if (!currentWord) return;
+    setClozeFeedback(input.toLocaleLowerCase().trim() === currentWord.word.toLocaleLowerCase().trim()
+      ? 'correct'
+      : 'incorrect');
+  }
+
+  function handleVoiceInput() {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setFrictionError('Voice recognition is not supported by this browser. Type the word instead.');
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.lang = LANGUAGES.find((language) => language.code === targetLang)?.speechLang || 'en-US';
+    recognition.interimResults = false;
+    recognition.onstart = () => {
+      setFrictionError('');
+      setIsListeningSpeech(true);
+    };
+    recognition.onend = () => setIsListeningSpeech(false);
+    recognition.onerror = (event) => {
+      setIsListeningSpeech(false);
+      setFrictionError(`Voice recognition failed: ${event.error}`);
+    };
+    recognition.onresult = (event) => {
+      const transcript = event.results[0][0].transcript.toLocaleLowerCase().trim();
+      setClozeInput(transcript);
+      checkClozeAnswer(transcript);
+    };
+    recognition.start();
+  }
+
+  async function evaluateSentenceWithAI() {
+    if (!userSentence.trim() || !currentWord) return;
+    setIsEvaluatingSentence(true);
+    setAiEvaluation(null);
+    setEvaluationError('');
+    try {
+      const result = await evaluateSentence({
+        sentence: userSentence,
+        word: currentWord.word,
+        targetLang,
+        uiLang
+      });
+      setAiEvaluation(result);
+    } catch (error) {
+      setEvaluationError(error.message);
+    } finally {
+      setIsEvaluatingSentence(false);
+    }
+  }
+
+  async function generateAiClipsForWord(word) {
+    setIsGeneratingAiClips(true);
+    try {
+      const generated = await generateClips({ word, targetLang, uiLang });
+      const newWord = {
+        word: generated.word,
+        phonetic: generated.phonetic,
+        dictionaryMeaning: { [uiLang]: generated.slangContext || '' },
+        slangContext: generated.slangContext,
+        category: 'all',
+        clips: generated.clips
+      };
+      setWordList((current) => [newWord, ...current]);
+      setActiveWordIndex(0);
+      setActiveClipIndex(0);
+      setActiveTab('immersion');
+    } catch (error) {
+      console.error('Could not generate learning clips:', error);
+      window.alert(error.message);
+    } finally {
+      setIsGeneratingAiClips(false);
+    }
+  }
+
+  async function processImportedLink() {
+    if (!importUrl.trim()) return;
+    setIsProcessingImport(true);
+    setImportError('');
+    setImportedLesson(null);
+    try {
+      setImportedLesson(await importVideo({ url: importUrl, targetLang, uiLang }));
+    } catch (error) {
+      setImportError(error.message);
+    } finally {
+      setIsProcessingImport(false);
+    }
+  }
+
+  function advanceWord() {
+    if (!wordList.length) return;
+    setActiveWordIndex((index) => (index + 1) % wordList.length);
+    setActiveClipIndex(0);
+    setClozeInput('');
+    setClozeFeedback(null);
+    setAiEvaluation(null);
+  }
+
+  function goToNextClip() {
+    if (!currentWord?.clips?.length) return;
+    if (activeClipIndex < currentWord.clips.length - 1) {
+      setActiveClipIndex((index) => index + 1);
+    } else {
+      advanceWord();
+    }
+  }
+
+  function rateCurrentRecall(rating) {
+    if (currentWord && isWordInVault(currentWord.word)) rateRecall(currentWord.word, rating);
+    setSrsRevealed(false);
+    advanceWord();
+  }
+
+  function handleProfileSettingsUpdate(patch) {
+    updateProfileSettings(patch);
+    if (patch.learningLanguages && !patch.learningLanguages.includes(targetLang)) {
+      resetDeck();
+      setTargetLang(patch.learningLanguages[0]);
+    }
+    if (patch.videoDuration || patch.relevanceLanguage) resetDeck();
+  }
+
+  const fallbackMeaning = selectedWordModal
+    ? currentWord?.dictionaryMeaning?.[uiLang] || currentWord?.dictionaryMeaning?.es || ''
+    : '';
+
+  return (
+    <div className="w-full min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center antialiased">
+      <div className="w-full h-screen sm:h-[880px] sm:max-w-[420px] sm:rounded-[3rem] sm:border-[8px] sm:border-slate-800 sm:shadow-[0_0_50px_rgba(0,0,0,0.8)] bg-black flex flex-col overflow-hidden relative">
+        <Header
+          title={translations.appTitle}
+          targetLang={targetLang}
+          uiLang={uiLang}
+          availableLanguages={availableLanguages}
+          onTargetLanguageChange={(language) => {
+            resetDeck();
+            setTargetLang(language);
+          }}
+          onUiLanguageChange={setUiLang}
+        />
+        <CategoryBar
+          selectedCategory={selectedCategory}
+          uiLang={uiLang}
+          onSelectCategory={(category) => {
+            resetDeck();
+            setSelectedCategory(category);
+          }}
+        />
+        <main className="flex-1 relative overflow-hidden flex flex-col bg-slate-950">
+          {(clipsError || storageError) && (
+            <p role="alert" className="absolute top-2 left-2 right-2 z-40 rounded-xl bg-rose-950/90 p-2 text-[10px] text-rose-200">
+              {clipsError || storageError}
+            </p>
+          )}
+          {activeTab === 'immersion' && (
+            <ReelsFeed
+              word={currentWord}
+              clip={currentClip}
+              isLoading={isLoading}
+              clipIndex={activeClipIndex}
+              playbackSpeed={playbackSpeed}
+              isPlaying={isPlaying}
+              isSaved={currentWord ? isWordInVault(currentWord.word) : false}
+              hideTranslation={hideTranslation}
+              uiLang={uiLang}
+              translations={translations}
+              onSetPlaybackSpeed={setPlaybackSpeed}
+              onPlaySentence={(sentence) => playClipAudio(sentence)}
+              onPlayWord={() => playClipAudio(currentWord?.word, targetLang, 0.9)}
+              onToggleVault={() => toggleVault(currentWord)}
+              onToggleTranslation={() => setHideTranslation((hidden) => !hidden)}
+              onSelectWord={(selection) => setSelectedWordModal({ ...selection, targetLang })}
+              onNextClip={goToNextClip}
+            />
+          )}
+          {activeTab === 'friction' && (
+            <FrictionView
+              word={currentWord}
+              clip={currentClip}
+              translations={translations}
+              clozeInput={clozeInput}
+              onClozeInput={setClozeInput}
+              onCheckAnswer={() => checkClozeAnswer()}
+              clozeFeedback={clozeFeedback}
+              onVoiceInput={handleVoiceInput}
+              isListeningSpeech={isListeningSpeech}
+              userSentence={userSentence}
+              onUserSentence={setUserSentence}
+              onEvaluate={evaluateSentenceWithAI}
+              isEvaluating={isEvaluatingSentence}
+              evaluation={aiEvaluation}
+              onPlayMuted={() => playClipAudio(currentClip?.targetSentence, targetLang, playbackSpeed, true)}
+              error={frictionError || evaluationError}
+            />
+          )}
+          {activeTab === 'srs' && (
+            <SrsView
+              word={currentWord}
+              clip={currentClip}
+              translations={translations}
+              uiLang={uiLang}
+              revealed={srsRevealed}
+              onReveal={() => setSrsRevealed(true)}
+              onRate={rateCurrentRecall}
+              onPlay={() => playClipAudio(currentClip?.targetSentence)}
+            />
+          )}
+          {activeTab === 'vault' && (
+            <VaultView
+              words={vaultWords}
+              uiLang={uiLang}
+              translations={translations}
+              onGenerateClips={generateAiClipsForWord}
+              isGenerating={isGeneratingAiClips}
+              onRemove={toggleVault}
+            />
+          )}
+          {activeTab === 'import' && (
+            <ImportView
+              translations={translations}
+              importUrl={importUrl}
+              onUrlChange={setImportUrl}
+              onImport={processImportedLink}
+              isLoading={isProcessingImport}
+              lesson={importedLesson}
+              error={importError}
+            />
+          )}
+          {activeTab === 'profile' && (
+            <ProfileView settings={profileSettings} onUpdate={handleProfileSettingsUpdate} />
+          )}
+        </main>
+        <WordModal
+          selection={selectedWordModal}
+          uiLang={uiLang}
+          translations={translations}
+          fallbackMeaning={fallbackMeaning}
+          onClose={() => setSelectedWordModal(null)}
+          onPlay={() => playClipAudio(selectedWordModal?.word)}
+          onSave={() => {
+            toggleVault({
+              word: selectedWordModal?.word,
+              phonetic: '/native/',
+              dictionaryMeaning: fallbackMeaning ? { [uiLang]: fallbackMeaning } : {}
+            });
+            setSelectedWordModal(null);
+          }}
+        />
+        <BottomNav activeTab={activeTab} onSelectTab={setActiveTab} translations={translations} />
+      </div>
+    </div>
+  );
+}
